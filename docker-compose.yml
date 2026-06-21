@@ -1,0 +1,29 @@
+# Example compose for the bridge + an ntfy distributor.
+# Assumes hermes-webui is reachable at HERMES_WEBUI_URL (e.g. another compose
+# service on the same network, or a Tailscale host).
+services:
+  bridge:
+    build: .
+    env_file: .env
+    ports:
+      - "8099:8099"
+    restart: unless-stopped
+    depends_on:
+      - ntfy
+
+  # Self-hosted push server. Point NTFY_BASE_URL at http://ntfy:80 (in-network)
+  # or expose it and use the public URL. Subscribe to NTFY_TOPIC from the
+  # ntfy Android app (the UnifiedPush distributor).
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    command: serve
+    environment:
+      - NTFY_BASE_URL=http://localhost:8080
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  ntfy-cache:
