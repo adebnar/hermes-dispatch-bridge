@@ -21,7 +21,7 @@ def to_push(
     if event.type == "tool":
         return PushMessage(**base, status=f"Using {event.name}".strip())
     if event.type == "status":
-        return PushMessage(**base, status=event.text)
+        return PushMessage(**base, status=event.text) if event.text.strip() else None
     if event.type == "approval":
         return PushMessage(**base, status="Approval needed")
     if event.type == "completed":

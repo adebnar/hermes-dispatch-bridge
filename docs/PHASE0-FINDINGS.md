@@ -30,21 +30,50 @@ were initially built against. Source of truth: the live `/openapi.json` (title
 - Profiles: `GET/POST /api/profiles`, `/api/profiles/active`.
 - Skills, files/fs, config, memory, messaging platforms, kanban plugin, etc.
 
-## Chat / streaming — WebSocket JSON-RPC (NOT SSE)
+## Chat / streaming — WebSocket JSON-RPC (NOT SSE) — CONFIRMED LIVE
 There is **no** `/api/chat/start` or `/api/chat/stream`. Chat runs over a
-WebSocket:
+WebSocket, backed by `tui_gateway/server.py` (the TUI+dashboard gateway).
+Verified end-to-end against v0.16.0 with a live prompt.
 
 - URL: `ws(s)://<host>/api/ws?token=<session_token>` (or `?ticket=<ticket>`).
-- Protocol: **JSON-RPC 2.0**. Requests:
-  `{jsonrpc:"2.0", id, method, params}`. Observed request methods:
-  `session.create` (`{close_on_disconnect, source, profile?}`), `session.info`,
-  `model.options`, `config.set`.
-- Server pushes **notifications** as `{method:"event", params:{type, payload}}`.
-  Observed event `type`s: `dashboard.new_session_requested`, `tool.start`
-  (`{tool_id, name, context}`), `tool.progress` (`{name, preview}`),
-  `tool.complete` (`{tool_id, …}`). (Assistant text / token + terminal events
-  exist too; full enumeration TODO from the live socket.)
-- Also: `/api/events?...&channel=` (event feed) and a PTY WebSocket (terminal).
+- Protocol: **JSON-RPC 2.0**: `{jsonrpc:"2.0", id, method, params}`.
+- On connect the server pushes a `gateway.ready` notification.
+
+**Flow (verified):**
+1. `session.create {source, title, model?, provider?, profile?, reasoning_effort?, messages?(seed), cwd?}`
+   → result `{session_id, stored_session_id, message_count, messages, info}`.
+2. `prompt.submit {session_id, text, truncate_before_user_ordinal?}`
+   → result `{status:"streaming"}`. **This is how a user turn is sent.**
+3. Mid-run inject: `session.steer {session_id, text}` → `{status:"queued|rejected"}`.
+4. Cancel: `session.interrupt`. Others: `session.resume/list/info/history/
+   activate/title/close/delete/undo/compress/branch`.
+
+**Event notifications** — `{"jsonrpc":"2.0","method":"event",
+"params":{"type":<t>,"session_id":<sid>,"payload":{…}}}` (envelope from
+`_emit()`, server.py:802). Types seen live:
+| type | payload | meaning |
+|---|---|---|
+| `gateway.ready` | `{skin,…}` | connection ready |
+| `session.info` | `{model, provider, reasoning_effort, tools, …}` | run started/info |
+| `message.start` | `null` | assistant turn begins |
+| `thinking.delta` | `{text}` | thinking indicator text |
+| `reasoning.delta` | `{text}` | reasoning tokens |
+| `reasoning.available` | `{text}` | reasoning summary |
+| `message.delta` | `{text}` | **assistant text tokens** |
+| `message.complete` | `{text, usage{input,output,…}}` | **terminal: done** |
+| `tool.start` / `tool.complete` / `tool.generating` | `{tool_id,name,preview,…}` | tool activity |
+
+- Auxiliary: `/api/events?...&channel=` (event feed) and a PTY WebSocket.
+
+## Adapter mapping (dashboard → bridge `/v1`, app unchanged)
+- `message.delta` → `token`; `tool.start/complete/generating` → `tool`/`status`;
+  `session.info`/`thinking.delta` → `status`; `message.complete` → `completed`;
+  errors/`session.interrupt` → `error`/`interrupted`. (Drop reasoning from push.)
+- `stream_id` (app-facing) = the dashboard `session_id`; the hub opens one WS per
+  run, does `session.create`(or resume)+`prompt.submit`, and fans out mapped
+  frames + push. cancel→`session.interrupt`, steer→`session.steer`.
+- REST: `/api/cron/jobs` (+pause/resume/trigger), `/api/mcp/servers` (unwrap),
+  `/api/model/info`, and **`/api/audio/transcribe`** gives us a server STT route.
 
 ## Implication
 The bridge's `HermesClient` (REST + SSE, `/api/sessions` bare array,
