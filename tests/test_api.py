@@ -10,9 +10,20 @@ class FakeHermes:
     def __init__(self):
         self.created_cron = None
         self.cron_actions = []
+        self.sessions_profile = "unset"
 
-    async def sessions(self):
+    async def sessions(self, profile=None):
+        self.sessions_profile = profile
         return [{"id": "s1", "title": "Move research", "model": "m", "updated_at": 1.0}]
+
+    async def profiles(self):
+        return [
+            {"name": "default", "model": "gemma", "is_default": True},
+            {"name": "personal", "model": "claude", "is_default": False},
+        ]
+
+    async def active_profile(self):
+        return "personal"
 
     async def crons(self):
         return [{"id": "c1", "name": "Daily digest", "schedule": "0 9 * * *", "paused": True}]
@@ -36,8 +47,8 @@ class FakeHub:
         self.cancelled = None
         self.steered = None
 
-    async def start_run(self, session_id, message):
-        self.started = (session_id, message)
+    async def start_run(self, session_id, message, profile=None):
+        self.started = (session_id, message, profile)
         return "sess-1"
 
     async def cancel(self, stream_id):
@@ -87,7 +98,28 @@ def test_start_oneshot_opens_ws_run():
     body = r.json()
     assert body["kind"] == "oneshot"
     assert body["stream_id"] == "sess-1" and body["session_id"] == "sess-1"
-    assert hub.started == (None, "compare 3 moving companies")
+    assert hub.started == (None, "compare 3 moving companies", None)
+
+
+def test_profiles_list_with_active():
+    client, _, _, _ = make_client()
+    body = client.get("/v1/profiles").json()
+    assert body["active"] == "personal"
+    assert [p["name"] for p in body["profiles"]] == ["default", "personal"]
+    assert body["profiles"][0]["is_default"] is True
+
+
+def test_profile_header_forwarded_to_run():
+    client, _, hub, _ = make_client()
+    client.post("/v1/tasks", json={"message": "do a thing"},
+                headers={"X-Hermes-Profile": "dito"})
+    assert hub.started == (None, "do a thing", "dito")
+
+
+def test_profile_header_scopes_task_list():
+    client, hermes, _, _ = make_client()
+    client.get("/v1/tasks", headers={"X-Hermes-Profile": "odos"})
+    assert hermes.sessions_profile == "odos"
 
 
 def test_start_recurring_creates_cron():

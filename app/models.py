@@ -24,6 +24,17 @@ class McpServer(BaseModel):
     tools_count: int | None = None
 
 
+class ProfileInfo(BaseModel):
+    name: str
+    model: str | None = None
+    is_default: bool = False
+
+
+class ProfilesResponse(BaseModel):
+    profiles: list[ProfileInfo]
+    active: str | None = None
+
+
 class StartTaskRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str | None = None

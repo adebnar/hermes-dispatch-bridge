@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .auth import require_auth
@@ -16,6 +16,8 @@ from .hermes_client import HermesClient
 from .hub import StreamHub
 from .models import (
     McpServer,
+    ProfileInfo,
+    ProfilesResponse,
     PushRegisterRequest,
     Schedule,
     StartTaskRequest,
@@ -85,9 +87,29 @@ async def auth_check() -> dict:
     return {"ok": True}
 
 
+@router.get("/profiles", response_model=ProfilesResponse)
+async def list_profiles(hermes: HermesClient = Depends(get_hermes)) -> ProfilesResponse:
+    rows = await hermes.profiles()
+    active = await hermes.active_profile()
+    return ProfilesResponse(
+        profiles=[
+            ProfileInfo(
+                name=r.get("name", ""),
+                model=r.get("model"),
+                is_default=bool(r.get("is_default")),
+            )
+            for r in rows
+        ],
+        active=active,
+    )
+
+
 @router.get("/tasks", response_model=list[Task])
-async def list_tasks(hermes: HermesClient = Depends(get_hermes)) -> list[Task]:
-    rows = await hermes.sessions()
+async def list_tasks(
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> list[Task]:
+    rows = await hermes.sessions(profile=x_hermes_profile)
     return [
         Task(
             id=r.get("id") or r.get("session_id", ""),
@@ -114,6 +136,7 @@ async def start_task(
     body: StartTaskRequest,
     hermes: HermesClient = Depends(get_hermes),
     hub: StreamHub = Depends(get_hub),
+    x_hermes_profile: str | None = Header(default=None),
 ) -> StartTaskResponse:
     # Decide one-shot vs recurring up front (the "it became a cron job" behavior).
     schedule = classify_schedule(body.message)
@@ -124,7 +147,7 @@ async def start_task(
         return StartTaskResponse(kind="cron", cron=schedule.cron)
 
     # Open a server-held run over the dashboard WS; session id == app stream id.
-    sid = await hub.start_run(body.session_id, body.message)
+    sid = await hub.start_run(body.session_id, body.message, profile=x_hermes_profile)
     return StartTaskResponse(kind="oneshot", session_id=sid, stream_id=sid)
 
 

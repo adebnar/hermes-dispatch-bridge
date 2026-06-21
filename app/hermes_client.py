@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -70,9 +71,20 @@ class HermesClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def sessions(self) -> list[dict]:
-        data = await self._get("/api/sessions?limit=50&offset=0&order=created")
+    async def sessions(self, profile: str | None = None) -> list[dict]:
+        path = "/api/sessions?limit=50&offset=0&order=created"
+        if profile:
+            path += f"&profile={quote(profile)}"
+        data = await self._get(path)
         return data.get("sessions", []) if isinstance(data, dict) else []
+
+    async def profiles(self) -> list[dict]:
+        data = await self._get("/api/profiles")
+        return data.get("profiles", []) if isinstance(data, dict) else data
+
+    async def active_profile(self) -> str | None:
+        data = await self._get("/api/profiles/active")
+        return data.get("active") if isinstance(data, dict) else None
 
     async def crons(self) -> list[dict]:
         data = await self._get("/api/cron/jobs")

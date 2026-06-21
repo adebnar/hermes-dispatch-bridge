@@ -37,10 +37,12 @@ class StreamHub:
         self._tasks: dict[str, asyncio.Task] = {}
         self._conns: dict[str, object] = {}  # sid -> websocket
 
-    async def start_run(self, session_id: str | None, message: str) -> str:
+    async def start_run(
+        self, session_id: str | None, message: str, profile: str | None = None
+    ) -> str:
         """Open a run and return its session id (used as the app's stream id)."""
         sid_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-        task = asyncio.create_task(self._run(session_id, message, sid_future))
+        task = asyncio.create_task(self._run(session_id, message, profile, sid_future))
         try:
             sid = await asyncio.wait_for(asyncio.shield(sid_future), timeout=_START_TIMEOUT)
         except TimeoutError:
@@ -51,17 +53,21 @@ class StreamHub:
         return sid
 
     async def _run(
-        self, requested_sid: str | None, message: str, sid_future: asyncio.Future
+        self,
+        requested_sid: str | None,
+        message: str,
+        profile: str | None,
+        sid_future: asyncio.Future,
     ) -> None:
         sid = requested_sid
         try:
             ws_url = await self._client.ws_url()
             async with websockets.connect(ws_url, max_size=None) as ws:
                 if requested_sid is None:
-                    await ws.send(
-                        _rpc(1, "session.create", {"source": "hermes-dispatch",
-                                                   "title": message[:60]})
-                    )
+                    create_params: dict = {"source": "hermes-dispatch", "title": message[:60]}
+                    if profile:
+                        create_params["profile"] = profile
+                    await ws.send(_rpc(1, "session.create", create_params))
                 async for raw in ws:
                     msg = json.loads(raw)
 
