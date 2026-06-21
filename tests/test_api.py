@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, get_hermes, get_hub
+from app.main import app, get_hermes, get_hub, get_registry
+from app.registry import EndpointRegistry
 
 
 class FakeHermes:
@@ -49,9 +50,11 @@ class FakeHub:
 def make_client():
     fake_hermes = FakeHermes()
     fake_hub = FakeHub()
+    registry = EndpointRegistry()
     app.dependency_overrides[get_hermes] = lambda: fake_hermes
     app.dependency_overrides[get_hub] = lambda: fake_hub
-    return TestClient(app), fake_hermes, fake_hub
+    app.dependency_overrides[get_registry] = lambda: registry
+    return TestClient(app), fake_hermes, fake_hub, registry
 
 
 def teardown_function():
@@ -59,13 +62,13 @@ def teardown_function():
 
 
 def test_health():
-    client, _, _ = make_client()
+    client, _, _, _ = make_client()
     r = client.get("/health")
     assert r.status_code == 200 and r.json()["ok"] is True
 
 
 def test_list_tasks_maps_sessions():
-    client, _, _ = make_client()
+    client, _, _, _ = make_client()
     r = client.get("/v1/tasks")
     assert r.status_code == 200
     assert r.json()[0] == {
@@ -74,14 +77,14 @@ def test_list_tasks_maps_sessions():
 
 
 def test_list_schedules_maps_enabled_to_paused():
-    client, _, _ = make_client()
+    client, _, _, _ = make_client()
     r = client.get("/v1/schedules")
     body = r.json()[0]
     assert body["cron"] == "0 9 * * *" and body["paused"] is True
 
 
 def test_start_oneshot_starts_run_and_holds_it():
-    client, hermes, hub = make_client()
+    client, hermes, hub, _ = make_client()
     r = client.post("/v1/tasks", json={"message": "compare 3 moving companies"})
     body = r.json()
     assert body["kind"] == "oneshot" and body["stream_id"] == "stream-1"
@@ -90,7 +93,7 @@ def test_start_oneshot_starts_run_and_holds_it():
 
 
 def test_start_recurring_creates_cron_instead():
-    client, hermes, _ = make_client()
+    client, hermes, _, _ = make_client()
     r = client.post("/v1/tasks", json={"message": "every Monday at 9am send a digest"})
     body = r.json()
     assert body["kind"] == "cron" and body["cron"] == "0 9 * * 1"
@@ -98,24 +101,33 @@ def test_start_recurring_creates_cron_instead():
 
 
 def test_schedule_action_rejects_unknown():
-    client, _, _ = make_client()
+    client, _, _, _ = make_client()
     assert client.post("/v1/schedules/c1/frobnicate").status_code == 400
     assert client.post("/v1/schedules/c1/pause").status_code == 200
 
 
 def test_mcp_list():
-    client, _, _ = make_client()
+    client, _, _, _ = make_client()
     assert client.get("/v1/mcp").json()[0]["name"] == "gmail"
 
 
 def test_cancel_forwards_to_hermes():
-    client, hermes, _ = make_client()
+    client, hermes, _, _ = make_client()
     assert client.post("/v1/tasks/stream-9/cancel").status_code == 200
     assert hermes.cancelled == "stream-9"
 
 
 def test_steer_forwards_message():
-    client, hermes, _ = make_client()
+    client, hermes, _, _ = make_client()
     r = client.post("/v1/tasks/stream-9/steer", json={"message": "actually, use Gmail"})
     assert r.status_code == 200
     assert hermes.steered == ("stream-9", "actually, use Gmail")
+
+
+def test_push_register_and_unregister():
+    client, _, _, registry = make_client()
+    r = client.post("/v1/push/register", json={"endpoint": "https://ntfy.sh/dev1"})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert "https://ntfy.sh/dev1" in registry.all()
+    r = client.post("/v1/push/unregister", json={"endpoint": "https://ntfy.sh/dev1"})
+    assert r.json()["count"] == 0

@@ -30,7 +30,12 @@ It sits next to your self-hosted Hermes agent (fronting [hermes-webui](https://g
 | POST | `/v1/tasks/{stream_id}/steer` | Send a mid-run message |
 | GET | `/v1/schedules` | List scheduled jobs |
 | POST | `/v1/schedules/{id}/{pause\|resume\|run\|delete}` | Control a job |
+| POST | `/v1/push/register` | Register this device's push endpoint (ntfy URL) |
+| POST | `/v1/push/unregister` | Remove a device endpoint |
 | GET | `/v1/mcp` | List connected MCP servers |
+
+Background push fans out to every **registered device endpoint** plus an
+optional statically-configured `NTFY_TOPIC`.
 
 ## Setup
 

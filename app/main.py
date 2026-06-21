@@ -16,13 +16,15 @@ from .hermes_client import HermesClient
 from .hub import StreamHub
 from .models import (
     McpServer,
+    PushRegisterRequest,
     Schedule,
     StartTaskRequest,
     StartTaskResponse,
     SteerRequest,
     Task,
 )
-from .push import NtfyPublisher
+from .push import Pusher
+from .registry import EndpointRegistry
 
 log = logging.getLogger("hermes-dispatch-bridge")
 
@@ -35,10 +37,17 @@ async def lifespan(app: FastAPI):
         log.warning("BRIDGE_TOKEN is not set — the mobile API is UNAUTHENTICATED (dev only).")
     http = httpx.AsyncClient(timeout=settings.request_timeout, follow_redirects=True)
     hermes = HermesClient(settings.hermes_webui_url, settings.hermes_webui_password, http)
-    publisher = NtfyPublisher(settings.ntfy_base_url, settings.ntfy_topic, http)
+    registry = EndpointRegistry()
+    static_endpoint = (
+        f"{settings.ntfy_base_url.rstrip('/')}/{settings.ntfy_topic}"
+        if settings.ntfy_topic
+        else None
+    )
+    publisher = Pusher(http, registry, static_endpoint)
     hub = StreamHub(hermes, publisher)
     app.state.http = http
     app.state.hermes = hermes
+    app.state.registry = registry
     app.state.hub = hub
     try:
         yield
@@ -56,6 +65,10 @@ def get_hermes(request: Request) -> HermesClient:
 
 def get_hub(request: Request) -> StreamHub:
     return request.app.state.hub
+
+
+def get_registry(request: Request) -> EndpointRegistry:
+    return request.app.state.registry
 
 
 @app.get("/health")
@@ -159,6 +172,24 @@ async def schedule_action(
         raise HTTPException(400, f"Unknown action '{action}'")
     await hermes.cron_action(action, schedule_id)
     return {"ok": True}
+
+
+@router.post("/push/register")
+async def register_push(
+    body: PushRegisterRequest,
+    registry: EndpointRegistry = Depends(get_registry),
+) -> dict:
+    registry.add(body.endpoint)
+    return {"ok": True, "count": len(registry)}
+
+
+@router.post("/push/unregister")
+async def unregister_push(
+    body: PushRegisterRequest,
+    registry: EndpointRegistry = Depends(get_registry),
+) -> dict:
+    registry.remove(body.endpoint)
+    return {"ok": True, "count": len(registry)}
 
 
 @router.get("/mcp", response_model=list[McpServer])

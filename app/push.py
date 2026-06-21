@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 
 from .models import PushMessage
+from .registry import EndpointRegistry
 from .sse import SseEvent
 
 
@@ -32,24 +33,32 @@ def to_push(
     return None
 
 
-class NtfyPublisher:
-    """Publishes :class:`PushMessage` JSON to an ntfy topic (UnifiedPush endpoint)."""
+class Pusher:
+    """Publishes :class:`PushMessage` JSON to every registered device endpoint
+    plus an optional statically-configured ntfy topic."""
 
-    def __init__(self, base_url: str, topic: str, client: httpx.AsyncClient):
-        self._url = f"{base_url.rstrip('/')}/{topic}"
-        self._enabled = bool(topic)
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        registry: EndpointRegistry,
+        static_endpoint: str | None = None,
+    ):
         self._client = client
+        self._registry = registry
+        self._static = static_endpoint
+
+    def targets(self) -> list[str]:
+        urls = set(self._registry.all())
+        if self._static:
+            urls.add(self._static)
+        return sorted(urls)
 
     async def publish(self, message: PushMessage) -> None:
-        if not self._enabled:
-            return
-        try:
-            await self._client.post(
-                self._url,
-                content=message.model_dump_json(),
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-        except httpx.HTTPError:
-            # Push is best-effort; never let a delivery failure break a run.
-            pass
+        body = message.model_dump_json()
+        headers = {"Content-Type": "application/json"}
+        for url in self.targets():
+            try:
+                await self._client.post(url, content=body, headers=headers, timeout=10.0)
+            except httpx.HTTPError:
+                # Push is best-effort; never let a delivery failure break a run.
+                pass

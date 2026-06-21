@@ -12,14 +12,14 @@ import contextlib
 from collections.abc import AsyncIterator
 
 from .hermes_client import HermesClient
-from .push import NtfyPublisher, to_push
+from .push import Pusher, to_push
 from .sse import format_frame, is_terminal, parse
 
 _SENTINEL = object()
 
 
 class StreamHub:
-    def __init__(self, client: HermesClient, publisher: NtfyPublisher):
+    def __init__(self, client: HermesClient, publisher: Pusher):
         self._client = client
         self._publisher = publisher
         self._subs: dict[str, set[asyncio.Queue]] = {}
