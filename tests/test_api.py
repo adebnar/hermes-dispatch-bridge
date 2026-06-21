@@ -31,6 +31,12 @@ class FakeHermes:
     async def cron_action(self, action, cron_id):
         return None
 
+    async def cancel_chat(self, stream_id):
+        self.cancelled = stream_id
+
+    async def steer_chat(self, stream_id, message):
+        self.steered = (stream_id, message)
+
 
 class FakeHub:
     def __init__(self):
@@ -100,3 +106,16 @@ def test_schedule_action_rejects_unknown():
 def test_mcp_list():
     client, _, _ = make_client()
     assert client.get("/v1/mcp").json()[0]["name"] == "gmail"
+
+
+def test_cancel_forwards_to_hermes():
+    client, hermes, _ = make_client()
+    assert client.post("/v1/tasks/stream-9/cancel").status_code == 200
+    assert hermes.cancelled == "stream-9"
+
+
+def test_steer_forwards_message():
+    client, hermes, _ = make_client()
+    r = client.post("/v1/tasks/stream-9/steer", json={"message": "actually, use Gmail"})
+    assert r.status_code == 200
+    assert hermes.steered == ("stream-9", "actually, use Gmail")

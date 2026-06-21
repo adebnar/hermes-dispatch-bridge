@@ -26,6 +26,8 @@ It sits next to your self-hosted Hermes agent (fronting [hermes-webui](https://g
 | GET | `/v1/tasks` | List tasks (sessions) |
 | POST | `/v1/tasks` | Start a task → one-shot run (held server-side) **or** a cron |
 | GET | `/v1/tasks/{stream_id}/events` | Foreground SSE for a held run |
+| POST | `/v1/tasks/{stream_id}/cancel` | Cancel a running task |
+| POST | `/v1/tasks/{stream_id}/steer` | Send a mid-run message |
 | GET | `/v1/schedules` | List scheduled jobs |
 | POST | `/v1/schedules/{id}/{pause\|resume\|run\|delete}` | Control a job |
 | GET | `/v1/mcp` | List connected MCP servers |

@@ -62,6 +62,20 @@ class HermesClient:
         resp.raise_for_status()
         return resp.json()["stream_id"]
 
+    async def cancel_chat(self, stream_id: str) -> None:
+        await self.ensure_login()
+        resp = await self._client.post(
+            f"{self._base}/api/chat/cancel", json={"stream_id": stream_id}
+        )
+        resp.raise_for_status()
+
+    async def steer_chat(self, stream_id: str, message: str) -> None:
+        await self.ensure_login()
+        resp = await self._client.post(
+            f"{self._base}/api/chat/steer", json={"stream_id": stream_id, "message": message}
+        )
+        resp.raise_for_status()
+
     async def cron_action(self, action: str, cron_id: str) -> None:
         await self.ensure_login()
         resp = await self._client.post(f"{self._base}/api/crons/{action}", json={"id": cron_id})

@@ -19,6 +19,7 @@ from .models import (
     Schedule,
     StartTaskRequest,
     StartTaskResponse,
+    SteerRequest,
     Task,
 )
 from .push import NtfyPublisher
@@ -111,6 +112,25 @@ async def task_events(
 ) -> StreamingResponse:
     hub.ensure_consumer(stream_id, None)
     return StreamingResponse(hub.subscribe(stream_id), media_type="text/event-stream")
+
+
+@router.post("/tasks/{stream_id}/cancel")
+async def cancel_task(
+    stream_id: str,
+    hermes: HermesClient = Depends(get_hermes),
+) -> dict:
+    await hermes.cancel_chat(stream_id)
+    return {"ok": True}
+
+
+@router.post("/tasks/{stream_id}/steer")
+async def steer_task(
+    stream_id: str,
+    body: SteerRequest,
+    hermes: HermesClient = Depends(get_hermes),
+) -> dict:
+    await hermes.steer_chat(stream_id, body.message)
+    return {"ok": True}
 
 
 @router.get("/schedules", response_model=list[Schedule])

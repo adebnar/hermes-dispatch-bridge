@@ -30,6 +30,10 @@ class StartTaskRequest(BaseModel):
     model: str | None = None
 
 
+class SteerRequest(BaseModel):
+    message: str = Field(min_length=1)
+
+
 class StartTaskResponse(BaseModel):
     kind: str  # "oneshot" | "cron"
     session_id: str | None = None
