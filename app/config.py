@@ -11,9 +11,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Upstream Hermes webui this bridge fronts.
-    hermes_webui_url: str = "http://127.0.0.1:9119"
-    hermes_webui_password: str = ""
+    # Upstream hermes-agent dashboard this bridge fronts (REST + JSON-RPC WS).
+    hermes_url: str = "http://127.0.0.1:9119"
+    # Dashboard session token (X-Hermes-Session-Token), from the dashboard HTML
+    # (window.__HERMES_SESSION_TOKEN__) or your loopback config.
+    hermes_token: str = ""
 
     # Shared secret the mobile app presents as `Authorization: Bearer <token>`.
     # If empty, auth is disabled (development only) — a warning is logged.

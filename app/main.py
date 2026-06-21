@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     if not settings.auth_enabled:
         log.warning("BRIDGE_TOKEN is not set — the mobile API is UNAUTHENTICATED (dev only).")
     http = httpx.AsyncClient(timeout=settings.request_timeout, follow_redirects=True)
-    hermes = HermesClient(settings.hermes_webui_url, settings.hermes_webui_password, http)
+    hermes = HermesClient(settings.hermes_url, settings.hermes_token, http)
     registry = EndpointRegistry()
     static_endpoint = (
         f"{settings.ntfy_base_url.rstrip('/')}/{settings.ntfy_topic}"
@@ -90,14 +90,23 @@ async def list_tasks(hermes: HermesClient = Depends(get_hermes)) -> list[Task]:
     rows = await hermes.sessions()
     return [
         Task(
-            id=r.get("session_id", ""),
-            title=r.get("title") or "Untitled task",
-            status=r.get("status") or "",
+            id=r.get("id") or r.get("session_id", ""),
+            title=r.get("title") or _first_message(r) or "Task",
+            status=r.get("status") or r.get("source") or "",
             model=r.get("model"),
-            updated_at=float(r.get("updated_at") or 0),
+            updated_at=float(r.get("updated_at") or r.get("created_at") or 0),
         )
         for r in rows
     ]
+
+
+def _first_message(session: dict) -> str:
+    msgs = session.get("messages")
+    if isinstance(msgs, list):
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+                return str(m["content"])[:80]
+    return ""
 
 
 @router.post("/tasks", response_model=StartTaskResponse)
@@ -109,13 +118,14 @@ async def start_task(
     # Decide one-shot vs recurring up front (the "it became a cron job" behavior).
     schedule = classify_schedule(body.message)
     if schedule.is_cron and schedule.cron:
-        await hermes.create_cron(name=body.message[:80], schedule=schedule.cron)
+        await hermes.create_cron(
+            name=body.message[:80], prompt=body.message, schedule=schedule.cron
+        )
         return StartTaskResponse(kind="cron", cron=schedule.cron)
 
-    session_id = body.session_id or await hermes.create_session()
-    stream_id = await hermes.start_chat(session_id, body.message, body.model)
-    hub.ensure_consumer(stream_id, session_id)  # server holds the run + pushes
-    return StartTaskResponse(kind="oneshot", session_id=session_id, stream_id=stream_id)
+    # Open a server-held run over the dashboard WS; session id == app stream id.
+    sid = await hub.start_run(body.session_id, body.message)
+    return StartTaskResponse(kind="oneshot", session_id=sid, stream_id=sid)
 
 
 @router.get("/tasks/{stream_id}/events")
@@ -123,16 +133,15 @@ async def task_events(
     stream_id: str,
     hub: StreamHub = Depends(get_hub),
 ) -> StreamingResponse:
-    hub.ensure_consumer(stream_id, None)
     return StreamingResponse(hub.subscribe(stream_id), media_type="text/event-stream")
 
 
 @router.post("/tasks/{stream_id}/cancel")
 async def cancel_task(
     stream_id: str,
-    hermes: HermesClient = Depends(get_hermes),
+    hub: StreamHub = Depends(get_hub),
 ) -> dict:
-    await hermes.cancel_chat(stream_id)
+    await hub.cancel(stream_id)
     return {"ok": True}
 
 
@@ -140,9 +149,9 @@ async def cancel_task(
 async def steer_task(
     stream_id: str,
     body: SteerRequest,
-    hermes: HermesClient = Depends(get_hermes),
+    hub: StreamHub = Depends(get_hub),
 ) -> dict:
-    await hermes.steer_chat(stream_id, body.message)
+    await hub.steer(stream_id, body.message)
     return {"ok": True}
 
 
@@ -153,10 +162,10 @@ async def list_schedules(hermes: HermesClient = Depends(get_hermes)) -> list[Sch
         Schedule(
             id=r.get("id", ""),
             name=r.get("name") or "Scheduled task",
-            cron=r.get("schedule") or "",
-            paused=not r.get("enabled", True),
-            next_run=r.get("next_run_at"),
-            last_run=r.get("last_run_at"),
+            cron=r.get("schedule") or r.get("cron") or "",
+            paused=bool(r.get("paused", not r.get("enabled", True))),
+            next_run=r.get("next_run") or r.get("next_run_at"),
+            last_run=r.get("last_run") or r.get("last_run_at"),
         )
         for r in rows
     ]
@@ -195,11 +204,15 @@ async def unregister_push(
 @router.get("/mcp", response_model=list[McpServer])
 async def list_mcp(hermes: HermesClient = Depends(get_hermes)) -> list[McpServer]:
     rows = await hermes.mcp_servers()
+
+    def _count(r: dict) -> int | None:
+        return len(r["tools"]) if isinstance(r.get("tools"), list) else r.get("tools_count")
+
     return [
         McpServer(
             name=r.get("name", ""),
-            status=r.get("status"),
-            tools_count=r.get("tools_count"),
+            status=r.get("status") or ("enabled" if r.get("enabled") else "disabled"),
+            tools_count=_count(r),
         )
         for r in rows
     ]

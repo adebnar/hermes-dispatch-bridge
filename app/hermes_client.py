@@ -1,113 +1,90 @@
-"""Async client for the upstream Hermes webui HTTP + SSE contract."""
+"""Client for the hermes-agent dashboard: REST (httpx) + WS URL/token helpers.
+
+Auth is the dashboard session token sent as `X-Hermes-Session-Token` on REST and
+as `?token=` on the WebSocket. See docs/PHASE0-FINDINGS.md.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
+# Dashboard cron actions → endpoint suffixes.
+CRON_ACTIONS = {"pause": "pause", "resume": "resume", "run": "trigger"}
+
 
 class HermesClient:
-    """Wraps the webui API. Logs in once (cookie jar) and re-logs on 401."""
-
-    def __init__(self, base_url: str, password: str, client: httpx.AsyncClient):
+    def __init__(self, base_url: str, token: str, client: httpx.AsyncClient):
         self._base = base_url.rstrip("/")
-        self._password = password
+        self._token = token
         self._client = client
-        self._authed = False
 
-    async def ensure_login(self) -> None:
-        if self._authed:
-            return
-        await self.login()
+    @property
+    def base_url(self) -> str:
+        return self._base
 
-    async def login(self) -> None:
-        resp = await self._client.post(
-            f"{self._base}/api/auth/login", json={"password": self._password}
-        )
-        resp.raise_for_status()
-        self._authed = True
+    @property
+    def token(self) -> str:
+        return self._token
 
-    async def _get_json(self, path: str) -> list | dict:
-        await self.ensure_login()
-        resp = await self._client.get(f"{self._base}{path}")
-        if resp.status_code == 401:
-            self._authed = False
-            await self.ensure_login()
-            resp = await self._client.get(f"{self._base}{path}")
+    def ws_url(self) -> str:
+        scheme = "wss" if self._base.startswith("https") else "ws"
+        host = self._base.split("://", 1)[-1]
+        return f"{scheme}://{host}/api/ws?token={self._token}"
+
+    def _headers(self) -> dict[str, str]:
+        return {"X-Hermes-Session-Token": self._token} if self._token else {}
+
+    async def _get(self, path: str) -> Any:
+        resp = await self._client.get(f"{self._base}{path}", headers=self._headers())
         resp.raise_for_status()
         return resp.json()
 
     async def sessions(self) -> list[dict]:
-        return await self._get_json("/api/sessions")
+        data = await self._get("/api/sessions?limit=50&offset=0&order=created")
+        return data.get("sessions", []) if isinstance(data, dict) else []
 
     async def crons(self) -> list[dict]:
-        return await self._get_json("/api/crons")
+        data = await self._get("/api/cron/jobs")
+        return data if isinstance(data, list) else data.get("jobs", [])
 
     async def mcp_servers(self) -> list[dict]:
-        return await self._get_json("/api/mcp/servers")
+        data = await self._get("/api/mcp/servers")
+        return data.get("servers", []) if isinstance(data, dict) else data
 
-    async def create_session(self) -> str:
-        await self.ensure_login()
-        resp = await self._client.post(f"{self._base}/api/session", json={})
-        resp.raise_for_status()
-        return resp.json()["session_id"]
+    async def model_info(self) -> dict:
+        return await self._get("/api/model/info")
 
-    async def start_chat(self, session_id: str, message: str, model: str | None = None) -> str:
-        await self.ensure_login()
-        body = {"session_id": session_id, "message": message}
-        if model:
-            body["model"] = model
-        resp = await self._client.post(f"{self._base}/api/chat/start", json=body)
-        resp.raise_for_status()
-        return resp.json()["stream_id"]
-
-    async def cancel_chat(self, stream_id: str) -> None:
-        await self.ensure_login()
+    async def create_cron(self, name: str, prompt: str, schedule: str) -> dict:
         resp = await self._client.post(
-            f"{self._base}/api/chat/cancel", json={"stream_id": stream_id}
-        )
-        resp.raise_for_status()
-
-    async def steer_chat(self, stream_id: str, message: str) -> None:
-        await self.ensure_login()
-        resp = await self._client.post(
-            f"{self._base}/api/chat/steer", json={"stream_id": stream_id, "message": message}
-        )
-        resp.raise_for_status()
-
-    async def cron_action(self, action: str, cron_id: str) -> None:
-        await self.ensure_login()
-        resp = await self._client.post(f"{self._base}/api/crons/{action}", json={"id": cron_id})
-        resp.raise_for_status()
-
-    async def create_cron(self, name: str, schedule: str) -> dict:
-        await self.ensure_login()
-        resp = await self._client.post(
-            f"{self._base}/api/crons/create", json={"name": name, "schedule": schedule}
+            f"{self._base}/api/cron/jobs",
+            headers=self._headers(),
+            json={"name": name, "prompt": prompt, "schedule": schedule},
         )
         resp.raise_for_status()
         return resp.json()
 
-    async def stream_chat(self, stream_id: str) -> AsyncIterator[tuple[str | None, str]]:
-        """Yield (event_name, data) SSE frames for a run."""
-        await self.ensure_login()
-        url = f"{self._base}/api/chat/stream"
-        headers = {"Accept": "text/event-stream"}
-        async with self._client.stream(
-            "GET", url, params={"stream_id": stream_id}, headers=headers, timeout=None
-        ) as resp:
-            resp.raise_for_status()
-            event: str | None = None
-            data: list[str] = []
-            async for line in resp.aiter_lines():
-                if line == "":
-                    if data or event is not None:
-                        yield event, "\n".join(data)
-                    event, data = None, []
-                elif line.startswith(":"):
-                    continue
-                elif line.startswith("event:"):
-                    event = line[len("event:"):].strip()
-                elif line.startswith("data:"):
-                    data.append(line[len("data:"):].lstrip())
+    async def cron_action(self, action: str, cron_id: str) -> None:
+        if action == "delete":
+            resp = await self._client.delete(
+                f"{self._base}/api/cron/jobs/{cron_id}", headers=self._headers()
+            )
+        else:
+            suffix = CRON_ACTIONS.get(action)
+            if suffix is None:
+                raise ValueError(f"unknown cron action: {action}")
+            resp = await self._client.post(
+                f"{self._base}/api/cron/jobs/{cron_id}/{suffix}", headers=self._headers()
+            )
+        resp.raise_for_status()
+
+    async def transcribe(self, audio: bytes, filename: str = "audio.m4a") -> str:
+        resp = await self._client.post(
+            f"{self._base}/api/audio/transcribe",
+            headers=self._headers(),
+            files={"file": (filename, audio)},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("text", "") if isinstance(data, dict) else str(data)

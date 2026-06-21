@@ -5,46 +5,46 @@ from app.registry import EndpointRegistry
 
 
 class FakeHermes:
+    """Stands in for the dashboard REST client."""
+
     def __init__(self):
         self.created_cron = None
-        self.started = None
+        self.cron_actions = []
 
     async def sessions(self):
-        return [{"session_id": "s1", "title": "Move research", "updated_at": 1.0}]
+        return [{"id": "s1", "title": "Move research", "model": "m", "updated_at": 1.0}]
 
     async def crons(self):
-        return [{"id": "c1", "name": "Daily digest", "schedule": "0 9 * * *", "enabled": False}]
+        return [{"id": "c1", "name": "Daily digest", "schedule": "0 9 * * *", "paused": True}]
 
     async def mcp_servers(self):
-        return [{"name": "gmail", "status": "ok", "tools_count": 4}]
+        return [{"name": "gmail", "enabled": True, "tools": ["a", "b", "c"]}]
 
-    async def create_session(self):
-        return "new-sess"
-
-    async def start_chat(self, session_id, message, model=None):
-        self.started = (session_id, message)
-        return "stream-1"
-
-    async def create_cron(self, name, schedule):
-        self.created_cron = (name, schedule)
+    async def create_cron(self, name, prompt, schedule):
+        self.created_cron = (name, prompt, schedule)
         return {"id": "c2", "name": name, "schedule": schedule}
 
     async def cron_action(self, action, cron_id):
-        return None
-
-    async def cancel_chat(self, stream_id):
-        self.cancelled = stream_id
-
-    async def steer_chat(self, stream_id, message):
-        self.steered = (stream_id, message)
+        self.cron_actions.append((action, cron_id))
 
 
 class FakeHub:
-    def __init__(self):
-        self.consumed = None
+    """Stands in for the WS StreamHub."""
 
-    def ensure_consumer(self, stream_id, session_id):
-        self.consumed = (stream_id, session_id)
+    def __init__(self):
+        self.started = None
+        self.cancelled = None
+        self.steered = None
+
+    async def start_run(self, session_id, message):
+        self.started = (session_id, message)
+        return "sess-1"
+
+    async def cancel(self, stream_id):
+        self.cancelled = stream_id
+
+    async def steer(self, stream_id, message):
+        self.steered = (stream_id, message)
 
 
 def make_client():
@@ -67,37 +67,40 @@ def test_health():
     assert r.status_code == 200 and r.json()["ok"] is True
 
 
-def test_list_tasks_maps_sessions():
+def test_list_tasks_maps_dashboard_sessions():
     client, _, _, _ = make_client()
     r = client.get("/v1/tasks")
     assert r.status_code == 200
-    assert r.json()[0] == {
-        "id": "s1", "title": "Move research", "status": "", "model": None, "updated_at": 1.0,
-    }
-
-
-def test_list_schedules_maps_enabled_to_paused():
-    client, _, _, _ = make_client()
-    r = client.get("/v1/schedules")
     body = r.json()[0]
+    assert body["id"] == "s1" and body["title"] == "Move research" and body["model"] == "m"
+
+
+def test_list_schedules_maps_paused():
+    client, _, _, _ = make_client()
+    body = client.get("/v1/schedules").json()[0]
     assert body["cron"] == "0 9 * * *" and body["paused"] is True
 
 
-def test_start_oneshot_starts_run_and_holds_it():
-    client, hermes, hub, _ = make_client()
+def test_start_oneshot_opens_ws_run():
+    client, _, hub, _ = make_client()
     r = client.post("/v1/tasks", json={"message": "compare 3 moving companies"})
     body = r.json()
-    assert body["kind"] == "oneshot" and body["stream_id"] == "stream-1"
-    assert hub.consumed == ("stream-1", "new-sess")
-    assert hermes.started == ("new-sess", "compare 3 moving companies")
+    assert body["kind"] == "oneshot"
+    assert body["stream_id"] == "sess-1" and body["session_id"] == "sess-1"
+    assert hub.started == (None, "compare 3 moving companies")
 
 
-def test_start_recurring_creates_cron_instead():
-    client, hermes, _, _ = make_client()
+def test_start_recurring_creates_cron():
+    client, hermes, hub, _ = make_client()
     r = client.post("/v1/tasks", json={"message": "every Monday at 9am send a digest"})
     body = r.json()
     assert body["kind"] == "cron" and body["cron"] == "0 9 * * 1"
-    assert hermes.created_cron == ("every Monday at 9am send a digest", "0 9 * * 1")
+    assert hermes.created_cron == (
+        "every Monday at 9am send a digest",
+        "every Monday at 9am send a digest",
+        "0 9 * * 1",
+    )
+    assert hub.started is None  # no run for a cron
 
 
 def test_schedule_action_rejects_unknown():
@@ -106,22 +109,23 @@ def test_schedule_action_rejects_unknown():
     assert client.post("/v1/schedules/c1/pause").status_code == 200
 
 
-def test_mcp_list():
+def test_mcp_list_maps_dashboard_shape():
     client, _, _, _ = make_client()
-    assert client.get("/v1/mcp").json()[0]["name"] == "gmail"
+    row = client.get("/v1/mcp").json()[0]
+    assert row["name"] == "gmail" and row["status"] == "enabled" and row["tools_count"] == 3
 
 
-def test_cancel_forwards_to_hermes():
-    client, hermes, _, _ = make_client()
-    assert client.post("/v1/tasks/stream-9/cancel").status_code == 200
-    assert hermes.cancelled == "stream-9"
+def test_cancel_calls_hub():
+    client, _, hub, _ = make_client()
+    assert client.post("/v1/tasks/sess-9/cancel").status_code == 200
+    assert hub.cancelled == "sess-9"
 
 
-def test_steer_forwards_message():
-    client, hermes, _, _ = make_client()
-    r = client.post("/v1/tasks/stream-9/steer", json={"message": "actually, use Gmail"})
+def test_steer_calls_hub():
+    client, _, hub, _ = make_client()
+    r = client.post("/v1/tasks/sess-9/steer", json={"message": "use Gmail"})
     assert r.status_code == 200
-    assert hermes.steered == ("stream-9", "actually, use Gmail")
+    assert hub.steered == ("sess-9", "use Gmail")
 
 
 def test_push_register_and_unregister():
