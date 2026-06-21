@@ -13,8 +13,10 @@ class Settings(BaseSettings):
 
     # Upstream hermes-agent dashboard this bridge fronts (REST + JSON-RPC WS).
     hermes_url: str = "http://127.0.0.1:9119"
-    # Dashboard session token (X-Hermes-Session-Token), from the dashboard HTML
-    # (window.__HERMES_SESSION_TOKEN__) or your loopback config.
+    # Dashboard session token (X-Hermes-Session-Token). Optional: if empty and the
+    # dashboard runs in loopback mode, the bridge auto-reads the live token from
+    # the dashboard HTML on startup and re-reads it if it rotates. Set explicitly
+    # only when the dashboard requires a fixed/remote token.
     hermes_token: str = ""
 
     # Shared secret the mobile app presents as `Authorization: Bearer <token>`.

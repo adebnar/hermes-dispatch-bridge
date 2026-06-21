@@ -55,7 +55,8 @@ class StreamHub:
     ) -> None:
         sid = requested_sid
         try:
-            async with websockets.connect(self._client.ws_url(), max_size=None) as ws:
+            ws_url = await self._client.ws_url()
+            async with websockets.connect(ws_url, max_size=None) as ws:
                 if requested_sid is None:
                     await ws.send(
                         _rpc(1, "session.create", {"source": "hermes-dispatch",
