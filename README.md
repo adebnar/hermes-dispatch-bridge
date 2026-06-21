@@ -64,6 +64,29 @@ Split into **🧑 what a human does** and **🤖 what you can ask your Hermes ag
 >
 > "Improve the cron classifier: create a Hermes skill `classify_schedule` that, given a task description, returns `{is_cron, cron}` and call it from the bridge instead of the regex heuristic."
 
+## The bridge URL your phone uses
+The bridge listens on **port 8099**. Point the app at `http://<this-machine>:8099`:
+```bash
+tailscale ip -4          # recommended (encrypted) → http://100.x.y.z:8099
+ipconfig getifaddr en0   # macOS LAN  → http://192.168.x.y:8099
+hostname -I              # Linux LAN  (first address)
+```
+The token to enter in the app is your `BRIDGE_TOKEN`:
+```bash
+grep BRIDGE_TOKEN .env
+```
+
+## Run on boot (macOS launchd)
+A ready-to-use agent template is in [`deploy/`](deploy/):
+```bash
+sed "s|__BRIDGE_DIR__|$(pwd)|g" deploy/co.hermesdispatch.bridge.plist \
+  > ~/Library/LaunchAgents/co.hermesdispatch.bridge.plist
+launchctl load ~/Library/LaunchAgents/co.hermesdispatch.bridge.plist
+launchctl list | grep hermesdispatch    # status 0 = healthy
+```
+It runs `scripts/run-bridge.sh` (uvicorn on `0.0.0.0:8099`), restarts on crash, and
+starts at login. Logs to `bridge.log`. (Linux: a `systemd` unit works the same way.)
+
 ## Develop
 
 ```bash

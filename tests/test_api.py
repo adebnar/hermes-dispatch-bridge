@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.auth import require_auth
 from app.main import app, get_hermes, get_hub, get_registry
 from app.registry import EndpointRegistry
 
@@ -65,6 +66,8 @@ def make_client():
     app.dependency_overrides[get_hermes] = lambda: fake_hermes
     app.dependency_overrides[get_hub] = lambda: fake_hub
     app.dependency_overrides[get_registry] = lambda: registry
+    # Hermetic: don't depend on ambient .env auth config in tests.
+    app.dependency_overrides[require_auth] = lambda: None
     return TestClient(app), fake_hermes, fake_hub, registry
 
 
