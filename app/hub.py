@@ -200,6 +200,20 @@ class StreamHub:
                 await ws.send(_rpc(91, "session.steer",
                                    {"session_id": stream_id, "text": message}))
 
+    async def approve(self, stream_id: str, choice: str, resolve_all: bool = False) -> None:
+        ws = self._conns.get(stream_id)
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.send(_rpc(92, "approval.respond",
+                                   {"session_id": stream_id, "choice": choice, "all": resolve_all}))
+
+    async def clarify(self, stream_id: str, answer: str) -> None:
+        ws = self._conns.get(stream_id)
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.send(_rpc(93, "clarify.respond",
+                                   {"session_id": stream_id, "answer": answer}))
+
     async def shutdown(self) -> None:
         for task in list(self._tasks.values()):
             task.cancel()

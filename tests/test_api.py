@@ -69,6 +69,12 @@ class FakeHub:
     async def steer(self, stream_id, message):
         self.steered = (stream_id, message)
 
+    async def approve(self, stream_id, choice, resolve_all=False):
+        self.approved = (stream_id, choice, resolve_all)
+
+    async def clarify(self, stream_id, answer):
+        self.clarified = (stream_id, answer)
+
 
 def make_client():
     fake_hermes = FakeHermes()
@@ -237,3 +243,11 @@ def test_recurring_cron_created_under_active_profile():
     client.post("/v1/tasks", json={"message": "every Monday at 9am digest"},
                 headers={"X-Hermes-Profile": "personal"})
     assert hermes.cron_profile == "personal"
+
+
+def test_approve_and_clarify_call_hub():
+    client, _, hub, _ = make_client()
+    assert client.post("/v1/tasks/s1/approve", json={"choice": "once"}).status_code == 200
+    assert hub.approved == ("s1", "once", False)
+    assert client.post("/v1/tasks/s1/clarify", json={"answer": "the readme"}).status_code == 200
+    assert hub.clarified == ("s1", "the readme")

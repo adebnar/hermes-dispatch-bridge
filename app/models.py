@@ -67,6 +67,15 @@ class SteerRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
+class ApproveRequest(BaseModel):
+    choice: str = "deny"  # once | always | deny
+    all: bool = False
+
+
+class ClarifyRequest(BaseModel):
+    answer: str = Field(min_length=1)
+
+
 class PushRegisterRequest(BaseModel):
     endpoint: str = Field(min_length=1)
 

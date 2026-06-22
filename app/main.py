@@ -16,6 +16,8 @@ from .config import settings
 from .hermes_client import HermesClient
 from .hub import StreamHub
 from .models import (
+    ApproveRequest,
+    ClarifyRequest,
     McpServer,
     Message,
     ModelOption,
@@ -207,6 +209,26 @@ async def steer_task(
     hub: StreamHub = Depends(get_hub),
 ) -> dict:
     await hub.steer(stream_id, body.message)
+    return {"ok": True}
+
+
+@router.post("/tasks/{stream_id}/approve")
+async def approve_task(
+    stream_id: str,
+    body: ApproveRequest,
+    hub: StreamHub = Depends(get_hub),
+) -> dict:
+    await hub.approve(stream_id, body.choice, body.all)
+    return {"ok": True}
+
+
+@router.post("/tasks/{stream_id}/clarify")
+async def clarify_task(
+    stream_id: str,
+    body: ClarifyRequest,
+    hub: StreamHub = Depends(get_hub),
+) -> dict:
+    await hub.clarify(stream_id, body.answer)
     return {"ok": True}
 
 

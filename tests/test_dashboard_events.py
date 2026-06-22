@@ -58,3 +58,13 @@ def test_tool_started_and_call_map_to_tool():
     assert map_event("tool.started", {"name": "gmail"}).type == "tool"
     assert map_event("tool.call", {"name": "notion"}).name == "notion"
     assert map_event("tool.completed", {"tool_id": "x"}).type == "status"
+
+
+def test_approval_and_clarify_mapping():
+    a = map_event("approval.request", {"command": "rm -rf x", "description": "delete"})
+    assert a.type == "approval"
+    na, da = to_app_frame(a)
+    assert na == "approval" and "rm -rf x" in da and "delete" in da
+    c = map_event("clarify.request", {"prompt": "Which file?"})
+    nc, dc = to_app_frame(c)
+    assert nc == "clarify" and "Which file?" in dc

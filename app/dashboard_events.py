@@ -42,6 +42,12 @@ def map_event(etype: str, payload: dict | None) -> SseEvent:
         return SseEvent("completed", raw=json.dumps(p))
     if t in ("session.interrupt", "session.interrupted", "cancelled"):
         return SseEvent("interrupted")
+    if t in ("approval.request", "approval"):
+        # command in .text, description in .name (see to_app_frame).
+        return SseEvent("approval", text=str(p.get("command") or ""),
+                        name=str(p.get("description") or ""))
+    if t in ("clarify.request", "clarify"):
+        return SseEvent("clarify", text=str(p.get("question") or p.get("prompt") or ""))
     if t.endswith(".error") or t == "error":
         return SseEvent("error", text=str(p.get("message") or p.get("text") or "error"))
     return SseEvent("unknown", text=t)
@@ -64,4 +70,8 @@ def to_app_frame(ev: SseEvent) -> tuple[str, str]:
         return "error", json.dumps({"message": ev.text})
     if ev.type == "interrupted":
         return "interrupted", "{}"
+    if ev.type == "approval":
+        return "approval", json.dumps({"command": ev.text, "description": ev.name})
+    if ev.type == "clarify":
+        return "clarify", json.dumps({"question": ev.text})
     return "unknown", json.dumps({"type": ev.text})
