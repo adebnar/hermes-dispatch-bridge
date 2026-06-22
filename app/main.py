@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from .auth import require_auth
@@ -21,6 +21,7 @@ from .models import (
     AlertsRequest,
     AlertsResponse,
     ApproveRequest,
+    ArchiveRequest,
     ClarifyRequest,
     InboxContent,
     InboxItem,
@@ -147,8 +148,9 @@ async def list_profiles(hermes: HermesClient = Depends(get_hermes)) -> ProfilesR
 async def list_tasks(
     hermes: HermesClient = Depends(get_hermes),
     x_hermes_profile: str | None = Header(default=None),
+    archived: str = Query(default="exclude"),  # exclude | only | include
 ) -> list[Task]:
-    rows = await hermes.sessions(profile=x_hermes_profile)
+    rows = await hermes.sessions(profile=x_hermes_profile, archived=archived)
     return [
         Task(
             id=r.get("id") or r.get("session_id", ""),
@@ -159,6 +161,44 @@ async def list_tasks(
         )
         for r in rows
     ]
+
+
+def _clean_snippet(text: str) -> str:
+    return (text or "").replace(">>>", "").replace("<<<", "").strip()
+
+
+@router.get("/tasks/search", response_model=list[Task])
+async def search_tasks(
+    q: str,
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> list[Task]:
+    rows = await hermes.search_sessions(q, profile=x_hermes_profile)
+    out: list[Task] = []
+    for r in rows:
+        sid = r.get("session_id") or r.get("id") or ""
+        snippet = _clean_snippet(r.get("snippet", ""))
+        out.append(
+            Task(
+                id=sid,
+                title=snippet[:80] or "Session",
+                status=r.get("source") or "",
+                model=r.get("model"),
+                updated_at=float(r.get("session_started") or 0),
+            )
+        )
+    return out
+
+
+@router.post("/tasks/{session_id}/archive")
+async def archive_task(
+    session_id: str,
+    body: ArchiveRequest,
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> dict:
+    await hermes.set_session_archived(session_id, body.archived, profile=x_hermes_profile)
+    return {"ok": True, "archived": body.archived}
 
 
 def _first_message(session: dict) -> str:

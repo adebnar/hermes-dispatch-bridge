@@ -14,9 +14,20 @@ class FakeHermes:
         self.updated_cron = None
         self.sessions_profile = "unset"
 
-    async def sessions(self, profile=None):
+    async def sessions(self, profile=None, archived="exclude"):
         self.sessions_profile = profile
+        self.sessions_archived = archived
         return [{"id": "s1", "title": "Move research", "model": "m", "updated_at": 1.0}]
+
+    async def search_sessions(self, q, profile=None, limit=30):
+        self.searched = (q, profile)
+        return [{
+            "session_id": "s9", "snippet": ">>>hello<<< world", "model": "m",
+            "session_started": 5.0, "source": "hermes-dispatch",
+        }]
+
+    async def set_session_archived(self, session_id, archived, profile=None):
+        self.archived_call = (session_id, archived, profile)
 
     async def profiles(self):
         return [
@@ -187,6 +198,29 @@ def test_update_schedule_sends_only_provided_fields():
 def test_update_schedule_rejects_empty():
     client, _, _, _ = make_client()
     assert client.patch("/v1/schedules/c1", json={}).status_code == 400
+
+
+def test_list_tasks_passes_archived_filter():
+    client, fake, _, _ = make_client()
+    client.get("/v1/tasks", params={"archived": "only"})
+    assert fake.sessions_archived == "only"
+
+
+def test_search_tasks_cleans_fts_markers():
+    client, fake, _, _ = make_client()
+    rows = client.get("/v1/tasks/search", params={"q": "hello"},
+                      headers={"X-Hermes-Profile": "personal"}).json()
+    assert fake.searched == ("hello", "personal")
+    assert rows[0]["id"] == "s9"
+    assert rows[0]["title"] == "hello world"  # >>>/<<< stripped
+
+
+def test_archive_task():
+    client, fake, _, _ = make_client()
+    r = client.post("/v1/tasks/s1/archive", json={"archived": True},
+                    headers={"X-Hermes-Profile": "personal"})
+    assert r.status_code == 200 and r.json()["archived"] is True
+    assert fake.archived_call == ("s1", True, "personal")
 
 
 def test_transcribe_forwards_audio_to_dashboard():

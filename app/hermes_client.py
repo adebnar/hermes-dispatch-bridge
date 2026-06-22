@@ -71,12 +71,37 @@ class HermesClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def sessions(self, profile: str | None = None) -> list[dict]:
-        path = "/api/sessions?limit=50&offset=0&order=created"
+    async def sessions(
+        self, profile: str | None = None, archived: str = "exclude"
+    ) -> list[dict]:
+        path = f"/api/sessions?limit=50&offset=0&order=created&archived={archived}"
         if profile:
             path += f"&profile={quote(profile)}"
         data = await self._get(path)
         return data.get("sessions", []) if isinstance(data, dict) else []
+
+    async def search_sessions(
+        self, q: str, profile: str | None = None, limit: int = 30
+    ) -> list[dict]:
+        path = f"/api/sessions/search?q={quote(q)}&limit={limit}"
+        if profile:
+            path += f"&profile={quote(profile)}"
+        data = await self._get(path)
+        return data.get("results", []) if isinstance(data, dict) else []
+
+    async def set_session_archived(
+        self, session_id: str, archived: bool, profile: str | None = None
+    ) -> None:
+        await self._ensure_token()
+        body: dict = {"archived": archived}
+        if profile:
+            body["profile"] = profile
+        resp = await self._client.patch(
+            f"{self._base}/api/sessions/{quote(session_id)}",
+            headers=self._headers(),
+            json=body,
+        )
+        resp.raise_for_status()
 
     async def profiles(self) -> list[dict]:
         data = await self._get("/api/profiles")
@@ -125,11 +150,16 @@ class HermesClient:
         self, name: str, prompt: str, schedule: str, profile: str | None = None
     ) -> dict:
         await self._ensure_token()
-        body = {"name": name, "prompt": prompt, "schedule": schedule}
+        # The dashboard reads the target profile from the ?profile= QUERY param
+        # (CronJobCreate has no profile field); a body profile is ignored and the
+        # job lands in "default". So pass it on the URL.
+        url = f"{self._base}/api/cron/jobs"
         if profile:
-            body["profile"] = profile
+            url += f"?profile={quote(profile)}"
         resp = await self._client.post(
-            f"{self._base}/api/cron/jobs", headers=self._headers(), json=body
+            url,
+            headers=self._headers(),
+            json={"name": name, "prompt": prompt, "schedule": schedule},
         )
         resp.raise_for_status()
         return resp.json()

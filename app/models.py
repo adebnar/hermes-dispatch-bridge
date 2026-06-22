@@ -140,5 +140,9 @@ class PushKeyRequest(BaseModel):
     key: str = ""
 
 
+class ArchiveRequest(BaseModel):
+    archived: bool = True
+
+
 class TranscribeResponse(BaseModel):
     text: str = ""
