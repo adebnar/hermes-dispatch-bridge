@@ -17,6 +17,7 @@ from .hermes_client import HermesClient
 from .hub import StreamHub
 from .models import (
     McpServer,
+    Message,
     ProfileInfo,
     ProfilesResponse,
     PushRegisterRequest,
@@ -143,7 +144,8 @@ async def start_task(
     schedule = classify_schedule(body.message)
     if schedule.is_cron and schedule.cron:
         await hermes.create_cron(
-            name=body.message[:80], prompt=body.message, schedule=schedule.cron
+            name=body.message[:80], prompt=body.message, schedule=schedule.cron,
+            profile=x_hermes_profile,
         )
         return StartTaskResponse(kind="cron", cron=schedule.cron)
 
@@ -152,6 +154,29 @@ async def start_task(
         body.session_id, body.message, profile=x_hermes_profile, images=body.images
     )
     return StartTaskResponse(kind="oneshot", session_id=sid, stream_id=sid)
+
+
+@router.get("/tasks/{session_id}/messages", response_model=list[Message])
+async def task_messages(
+    session_id: str,
+    hermes: HermesClient = Depends(get_hermes),
+) -> list[Message]:
+    out: list[Message] = []
+    for m in await hermes.messages(session_id):
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if isinstance(content, list):
+            text = "\n".join(
+                p.get("text", "") for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
+        else:
+            text = str(content or "")
+        if text.strip():
+            out.append(Message(role=role, text=text))
+    return out
 
 
 @router.get("/tasks/{stream_id}/events")

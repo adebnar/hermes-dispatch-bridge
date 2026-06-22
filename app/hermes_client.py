@@ -97,15 +97,22 @@ class HermesClient:
     async def model_info(self) -> dict:
         return await self._get("/api/model/info")
 
-    async def create_cron(self, name: str, prompt: str, schedule: str) -> dict:
+    async def create_cron(
+        self, name: str, prompt: str, schedule: str, profile: str | None = None
+    ) -> dict:
         await self._ensure_token()
+        body = {"name": name, "prompt": prompt, "schedule": schedule}
+        if profile:
+            body["profile"] = profile
         resp = await self._client.post(
-            f"{self._base}/api/cron/jobs",
-            headers=self._headers(),
-            json={"name": name, "prompt": prompt, "schedule": schedule},
+            f"{self._base}/api/cron/jobs", headers=self._headers(), json=body
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def messages(self, session_id: str) -> list[dict]:
+        data = await self._get(f"/api/sessions/{session_id}/messages")
+        return data.get("messages", []) if isinstance(data, dict) else data
 
     async def cron_action(self, action: str, cron_id: str) -> None:
         await self._ensure_token()

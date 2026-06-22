@@ -35,9 +35,17 @@ class FakeHermes:
     async def mcp_servers(self):
         return [{"name": "gmail", "enabled": True, "tools": ["a", "b", "c"]}]
 
-    async def create_cron(self, name, prompt, schedule):
+    async def create_cron(self, name, prompt, schedule, profile=None):
         self.created_cron = (name, prompt, schedule)
+        self.cron_profile = profile
         return {"id": "c2", "name": name, "schedule": schedule}
+
+    async def messages(self, session_id):
+        return [
+            {"role": "system", "content": "ignore me"},
+            {"role": "user", "content": "hi there"},
+            {"role": "assistant", "content": [{"type": "text", "text": "hello back"}]},
+        ]
 
     async def cron_action(self, action, cron_id):
         self.cron_actions.append((action, cron_id))
@@ -215,3 +223,17 @@ def test_schedules_scoped_by_profile():
     hermes.crons = crons_multi
     rows = client.get("/v1/schedules", headers={"X-Hermes-Profile": "dito"}).json()
     assert [r["id"] for r in rows] == ["b"]
+
+
+def test_task_messages_maps_roles_and_multipart():
+    client, _, _, _ = make_client()
+    rows = client.get("/v1/tasks/abc/messages").json()
+    assert [m["role"] for m in rows] == ["user", "assistant"]  # system dropped
+    assert rows[1]["text"] == "hello back"                      # multipart joined
+
+
+def test_recurring_cron_created_under_active_profile():
+    client, hermes, _, _ = make_client()
+    client.post("/v1/tasks", json={"message": "every Monday at 9am digest"},
+                headers={"X-Hermes-Profile": "personal"})
+    assert hermes.cron_profile == "personal"

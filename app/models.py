@@ -18,6 +18,11 @@ class Schedule(BaseModel):
     last_run: float | None = None
 
 
+class Message(BaseModel):
+    role: str
+    text: str
+
+
 class McpServer(BaseModel):
     name: str
     status: str | None = None
