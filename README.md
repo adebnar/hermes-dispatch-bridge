@@ -65,12 +65,26 @@ Split into **🧑 what a human does** and **🤖 what you can ask your Hermes ag
 > "Improve the cron classifier: create a Hermes skill `classify_schedule` that, given a task description, returns `{is_cron, cron}` and call it from the bridge instead of the regex heuristic."
 
 ## The bridge URL your phone uses
-The bridge listens on **port 8099**. Point the app at `http://<this-machine>:8099`:
+
+### HTTPS (recommended) — Tailscale Serve
+Give the bridge a real TLS cert (valid Let's Encrypt, auto-renewed) on your tailnet:
 ```bash
-tailscale ip -4          # recommended (encrypted) → http://100.x.y.z:8099
+./scripts/enable-https.sh
+# or directly:  tailscale serve --bg 8099
+```
+This proxies `https://<your-machine>.<tailnet>.ts.net` → `http://127.0.0.1:8099`.
+Use that **https URL** in the app — the phone validates the cert with the system
+trust store (no special config). Requires "HTTPS Certificates" enabled for your
+tailnet in the Tailscale admin console. To turn it off: `tailscale serve --https=443 off`.
+
+### Plain HTTP (LAN / Tailscale IP)
+The bridge listens on **port 8099**. If you skip Serve, point the app at `http://<this-machine>:8099`:
+```bash
+tailscale ip -4          # encrypted transport → http://100.x.y.z:8099
 ipconfig getifaddr en0   # macOS LAN  → http://192.168.x.y:8099
 hostname -I              # Linux LAN  (first address)
 ```
+
 The token to enter in the app is your `BRIDGE_TOKEN`:
 ```bash
 grep BRIDGE_TOKEN .env
