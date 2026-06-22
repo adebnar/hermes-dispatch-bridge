@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +30,17 @@ class Settings(BaseSettings):
     ntfy_base_url: str = "https://ntfy.sh"
     ntfy_topic: str = ""
 
+    # Where the bridge persists state that must survive a restart (push
+    # registrations, E2EE key, Inbox alert subscriptions).
+    state_dir: str = "state"
+
+    # Root of the hermes-agent install — used to locate local cron deliverables
+    # under {hermes_dir}/cron/output and {hermes_dir}/profiles/*/cron/output.
+    hermes_dir: str = "~/.hermes"
+
+    # How often the Inbox watcher scans for new local cron deliverables.
+    inbox_poll_seconds: float = 30.0
+
     request_timeout: float = 60.0
 
     @property
@@ -37,6 +50,14 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.bridge_token)
+
+    @property
+    def state_path(self) -> str:
+        return os.path.join(os.path.expanduser(self.state_dir), "bridge-state.json")
+
+    @property
+    def hermes_root(self) -> str:
+        return os.path.expanduser(self.hermes_dir)
 
 
 settings = Settings()

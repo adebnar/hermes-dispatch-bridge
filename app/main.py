@@ -13,17 +13,24 @@ from fastapi.responses import StreamingResponse
 from .auth import require_auth
 from .classify import classify_schedule
 from .config import settings
+from .crypto import decode_key
 from .hermes_client import HermesClient
 from .hub import StreamHub
+from .inbox import InboxService, InboxWatcher
 from .models import (
+    AlertsRequest,
+    AlertsResponse,
     ApproveRequest,
     ClarifyRequest,
+    InboxContent,
+    InboxItem,
     McpServer,
     Message,
     ModelOption,
     ModelsResponse,
     ProfileInfo,
     ProfilesResponse,
+    PushKeyRequest,
     PushRegisterRequest,
     Schedule,
     ScheduleUpdateRequest,
@@ -32,9 +39,11 @@ from .models import (
     StartTaskResponse,
     SteerRequest,
     Task,
+    TranscribeResponse,
 )
 from .push import Pusher
 from .registry import EndpointRegistry
+from .store import StateStore
 
 log = logging.getLogger("hermes-dispatch-bridge")
 
@@ -47,21 +56,31 @@ async def lifespan(app: FastAPI):
         log.warning("BRIDGE_TOKEN is not set — the mobile API is UNAUTHENTICATED (dev only).")
     http = httpx.AsyncClient(timeout=settings.request_timeout, follow_redirects=True)
     hermes = HermesClient(settings.hermes_url, settings.hermes_token, http)
-    registry = EndpointRegistry()
+    store = StateStore(settings.state_path)
+    registry = EndpointRegistry(store)
     static_endpoint = (
         f"{settings.ntfy_base_url.rstrip('/')}/{settings.ntfy_topic}"
         if settings.ntfy_topic
         else None
     )
-    publisher = Pusher(http, registry, static_endpoint)
+    publisher = Pusher(
+        http, registry, static_endpoint, get_key=lambda: decode_key(store.get("push_key", ""))
+    )
     hub = StreamHub(hermes, publisher)
+    inbox = InboxService(settings.hermes_root)
+    watcher = InboxWatcher(inbox, store, publisher, settings.inbox_poll_seconds)
+    watcher.start()
     app.state.http = http
     app.state.hermes = hermes
+    app.state.store = store
     app.state.registry = registry
     app.state.hub = hub
+    app.state.inbox = inbox
+    app.state.watcher = watcher
     try:
         yield
     finally:
+        await watcher.stop()
         await hub.shutdown()
         await http.aclose()
 
@@ -79,6 +98,18 @@ def get_hub(request: Request) -> StreamHub:
 
 def get_registry(request: Request) -> EndpointRegistry:
     return request.app.state.registry
+
+
+def get_inbox(request: Request) -> InboxService:
+    return request.app.state.inbox
+
+
+def get_watcher(request: Request) -> InboxWatcher:
+    return request.app.state.watcher
+
+
+def get_store(request: Request) -> StateStore:
+    return request.app.state.store
 
 
 @app.get("/health")
@@ -337,6 +368,93 @@ async def unregister_push(
 ) -> dict:
     registry.remove(body.endpoint)
     return {"ok": True, "count": len(registry)}
+
+
+@router.post("/push/key")
+async def set_push_key(
+    body: PushKeyRequest,
+    store: StateStore = Depends(get_store),
+) -> dict:
+    """Register (or clear) the E2EE key used to encrypt push payloads.
+
+    A blank key disables encryption. A non-empty key must be a base64 32-byte
+    AES-256 key; the bridge stores it and encrypts device-push bodies with it.
+    """
+    if body.key and decode_key(body.key) is None:
+        raise HTTPException(400, "key must be a base64-encoded 32-byte value")
+    store.set("push_key", body.key or "")
+    return {"ok": True, "encrypted": bool(body.key)}
+
+
+@router.get("/inbox", response_model=list[InboxItem])
+async def list_inbox(
+    inbox: InboxService = Depends(get_inbox),
+    x_hermes_profile: str | None = Header(default=None),
+) -> list[InboxItem]:
+    return [
+        InboxItem(
+            id=i.item_id,
+            profile=i.profile,
+            job_id=i.job_id,
+            job_name=i.job_name,
+            status=i.status,
+            created_at=i.created_at,
+            size=i.size,
+            snippet=i.snippet,
+        )
+        for i in inbox.list_items(profile=x_hermes_profile)
+    ]
+
+
+@router.get("/inbox/item", response_model=InboxContent)
+async def read_inbox(
+    id: str,
+    inbox: InboxService = Depends(get_inbox),
+) -> InboxContent:
+    found = inbox.read_item(id)
+    if found is None:
+        raise HTTPException(404, "Inbox item not found")
+    i, content = found
+    return InboxContent(
+        id=i.item_id,
+        profile=i.profile,
+        job_id=i.job_id,
+        job_name=i.job_name,
+        status=i.status,
+        created_at=i.created_at,
+        size=i.size,
+        snippet=i.snippet,
+        content=content,
+    )
+
+
+@router.get("/inbox/alerts", response_model=AlertsResponse)
+async def get_alerts(watcher: InboxWatcher = Depends(get_watcher)) -> AlertsResponse:
+    return AlertsResponse(job_ids=watcher.alerts())
+
+
+@router.put("/inbox/alerts", response_model=AlertsResponse)
+async def set_alerts(
+    body: AlertsRequest,
+    watcher: InboxWatcher = Depends(get_watcher),
+) -> AlertsResponse:
+    return AlertsResponse(job_ids=watcher.set_alerts(body.job_ids))
+
+
+@router.post("/audio/transcribe", response_model=TranscribeResponse)
+async def transcribe(
+    request: Request,
+    hermes: HermesClient = Depends(get_hermes),
+) -> TranscribeResponse:
+    """Server-side speech-to-text: forward uploaded audio to the dashboard."""
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "multipart field 'file' (audio) is required")
+    data = await upload.read()
+    filename = getattr(upload, "filename", None) or "audio.m4a"
+    text = await hermes.transcribe(data, filename)
+    return TranscribeResponse(text=text)
 
 
 @router.get("/models", response_model=ModelsResponse)

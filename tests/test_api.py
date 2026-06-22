@@ -55,6 +55,10 @@ class FakeHermes:
         self.updated_cron = (cron_id, updates, profile)
         return {"id": cron_id, **updates}
 
+    async def transcribe(self, data, filename="audio.m4a"):
+        self.transcribed = (len(data), filename)
+        return "hello world"
+
 
 class FakeHub:
     """Stands in for the WS StreamHub."""
@@ -183,6 +187,38 @@ def test_update_schedule_sends_only_provided_fields():
 def test_update_schedule_rejects_empty():
     client, _, _, _ = make_client()
     assert client.patch("/v1/schedules/c1", json={}).status_code == 400
+
+
+def test_transcribe_forwards_audio_to_dashboard():
+    client, fake, _, _ = make_client()
+    r = client.post("/v1/audio/transcribe", files={"file": ("clip.m4a", b"RIFFxxxx", "audio/m4a")})
+    assert r.status_code == 200
+    assert r.json()["text"] == "hello world"
+    assert fake.transcribed[1] == "clip.m4a"
+
+
+def test_transcribe_requires_file():
+    client, _, _, _ = make_client()
+    assert client.post("/v1/audio/transcribe").status_code == 400
+
+
+def test_push_key_validates_length():
+    import base64
+
+    from app.main import get_store
+    from app.store import StateStore
+
+    client, _, _, _ = make_client()
+    store = StateStore("/tmp/hermes-dispatch-test-state.json")
+    app.dependency_overrides[get_store] = lambda: store
+
+    assert client.post("/v1/push/key", json={"key": "too-short"}).status_code == 400
+    good = base64.b64encode(b"k" * 32).decode()
+    r = client.post("/v1/push/key", json={"key": good})
+    assert r.status_code == 200 and r.json()["encrypted"] is True
+    # Clearing disables encryption.
+    r = client.post("/v1/push/key", json={"key": ""})
+    assert r.json()["encrypted"] is False
 
 
 def test_mcp_list_maps_dashboard_shape():

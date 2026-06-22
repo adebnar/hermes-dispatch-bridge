@@ -104,3 +104,37 @@ class PushMessage(BaseModel):
     title: str = "Hermes"
     status: str = ""
     done: bool = False
+
+
+class InboxItem(BaseModel):
+    """A local cron deliverable (saved-to-disk markdown result)."""
+
+    id: str
+    profile: str = ""
+    job_id: str = ""
+    job_name: str = ""
+    status: str = "ok"  # ok | failed | silent
+    created_at: float | None = None
+    size: int = 0
+    snippet: str = ""
+
+
+class InboxContent(InboxItem):
+    content: str = ""
+
+
+class AlertsRequest(BaseModel):
+    job_ids: list[str] = Field(default_factory=list)
+
+
+class AlertsResponse(BaseModel):
+    job_ids: list[str] = Field(default_factory=list)
+
+
+class PushKeyRequest(BaseModel):
+    # Base64 (standard) 32-byte AES-256 key, or "" to disable encryption.
+    key: str = ""
+
+
+class TranscribeResponse(BaseModel):
+    text: str = ""
