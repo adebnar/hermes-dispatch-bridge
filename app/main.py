@@ -18,10 +18,13 @@ from .hub import StreamHub
 from .models import (
     McpServer,
     Message,
+    ModelOption,
+    ModelsResponse,
     ProfileInfo,
     ProfilesResponse,
     PushRegisterRequest,
     Schedule,
+    SetModelRequest,
     StartTaskRequest,
     StartTaskResponse,
     SteerRequest,
@@ -280,6 +283,38 @@ async def unregister_push(
 ) -> dict:
     registry.remove(body.endpoint)
     return {"ok": True, "count": len(registry)}
+
+
+@router.get("/models", response_model=ModelsResponse)
+async def list_models(
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> ModelsResponse:
+    opts = await hermes.model_options(profile=x_hermes_profile)
+    providers = opts.get("providers", []) if isinstance(opts, dict) else []
+    # Offer models from the active provider (and any user-defined ones).
+    out: list[ModelOption] = []
+    for p in providers:
+        if not (p.get("is_current") or p.get("is_user_defined")):
+            continue
+        slug = p.get("slug", "")
+        for m in p.get("models", []):
+            out.append(ModelOption(provider=slug, model=m))
+    return ModelsResponse(models=out, current=opts.get("model"))
+
+
+@router.post("/models/set")
+async def set_model(
+    body: SetModelRequest,
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> dict:
+    provider = body.provider or "nous"
+    if x_hermes_profile:
+        await hermes.set_profile_model(x_hermes_profile, provider, body.model)
+    else:
+        await hermes.set_global_model(provider, body.model)
+    return {"ok": True, "model": body.model}
 
 
 @router.get("/mcp", response_model=list[McpServer])

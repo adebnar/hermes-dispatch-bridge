@@ -29,6 +29,21 @@ class McpServer(BaseModel):
     tools_count: int | None = None
 
 
+class ModelOption(BaseModel):
+    provider: str
+    model: str
+
+
+class ModelsResponse(BaseModel):
+    models: list[ModelOption]
+    current: str | None = None
+
+
+class SetModelRequest(BaseModel):
+    model: str = Field(min_length=1)
+    provider: str | None = None
+
+
 class ProfileInfo(BaseModel):
     name: str
     model: str | None = None

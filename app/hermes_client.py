@@ -97,6 +97,30 @@ class HermesClient:
     async def model_info(self) -> dict:
         return await self._get("/api/model/info")
 
+    async def model_options(self, profile: str | None = None) -> dict:
+        path = "/api/model/options"
+        if profile:
+            path += f"?profile={quote(profile)}"
+        return await self._get(path)
+
+    async def set_profile_model(self, profile: str, provider: str, model: str) -> None:
+        await self._ensure_token()
+        resp = await self._client.put(
+            f"{self._base}/api/profiles/{quote(profile)}/model",
+            headers=self._headers(),
+            json={"provider": provider, "model": model},
+        )
+        resp.raise_for_status()
+
+    async def set_global_model(self, provider: str, model: str) -> None:
+        await self._ensure_token()
+        resp = await self._client.post(
+            f"{self._base}/api/model/set",
+            headers=self._headers(),
+            json={"provider": provider, "model": model},
+        )
+        resp.raise_for_status()
+
     async def create_cron(
         self, name: str, prompt: str, schedule: str, profile: str | None = None
     ) -> dict:
