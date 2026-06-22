@@ -267,6 +267,16 @@ async def schedule_action(
     return {"ok": True}
 
 
+@router.get("/push/info")
+async def push_info() -> dict:
+    """How to receive lock-screen alerts: subscribe to this ntfy topic."""
+    return {
+        "configured": settings.push_enabled,
+        "base_url": settings.ntfy_base_url,
+        "topic": settings.ntfy_topic,
+    }
+
+
 @router.post("/push/register")
 async def register_push(
     body: PushRegisterRequest,

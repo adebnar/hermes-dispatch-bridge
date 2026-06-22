@@ -54,8 +54,15 @@ class Pusher:
         return sorted(urls)
 
     async def publish(self, message: PushMessage) -> None:
-        body = message.model_dump_json()
-        headers = {"Content-Type": "application/json"}
+        # ntfy "simple" publish: body = text, Title/Tags/Priority via headers.
+        # Renders as a proper notification in the ntfy app (lock screen) and is
+        # also delivered to UnifiedPush subscribers.
+        body = (message.status or ("Complete" if message.done else "")).encode("utf-8")
+        headers = {
+            "Title": message.title or "Hermes",
+            "Tags": "white_check_mark" if message.done else "robot",
+            "Priority": "default" if message.done else "low",
+        }
         for url in self.targets():
             try:
                 await self._client.post(url, content=body, headers=headers, timeout=10.0)

@@ -75,6 +75,7 @@ class StreamHub:
         sid_future: asyncio.Future,
     ) -> None:
         sid = requested_sid
+        last_push: str | None = None  # dedupe consecutive identical push lines
         try:
             ws_url = await self._client.ws_url()
             async with websockets.connect(ws_url, max_size=None) as ws:
@@ -121,7 +122,8 @@ class StreamHub:
                     name, data = to_app_frame(ev)
                     self._emit(sid, (name, data))
                     push = to_push(ev, session_id=sid)
-                    if push is not None:
+                    if push is not None and push.status != last_push:
+                        last_push = push.status
                         await self._publisher.publish(push)
                     if is_terminal(ev):
                         break
