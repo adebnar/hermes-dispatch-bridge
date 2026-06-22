@@ -147,7 +147,9 @@ async def start_task(
         return StartTaskResponse(kind="cron", cron=schedule.cron)
 
     # Open a server-held run over the dashboard WS; session id == app stream id.
-    sid = await hub.start_run(body.session_id, body.message, profile=x_hermes_profile)
+    sid = await hub.start_run(
+        body.session_id, body.message, profile=x_hermes_profile, images=body.images
+    )
     return StartTaskResponse(kind="oneshot", session_id=sid, stream_id=sid)
 
 

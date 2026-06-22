@@ -47,11 +47,17 @@ class StreamHub:
         self._done: dict[str, bool] = {}
 
     async def start_run(
-        self, session_id: str | None, message: str, profile: str | None = None
+        self,
+        session_id: str | None,
+        message: str,
+        profile: str | None = None,
+        images: list[str] | None = None,
     ) -> str:
         """Open a run and return its session id (used as the app's stream id)."""
         sid_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-        task = asyncio.create_task(self._run(session_id, message, profile, sid_future))
+        task = asyncio.create_task(
+            self._run(session_id, message, profile, images or [], sid_future)
+        )
         try:
             sid = await asyncio.wait_for(asyncio.shield(sid_future), timeout=_START_TIMEOUT)
         except TimeoutError:
@@ -65,6 +71,7 @@ class StreamHub:
         requested_sid: str | None,
         message: str,
         profile: str | None,
+        images: list[str],
         sid_future: asyncio.Future,
     ) -> None:
         sid = requested_sid
@@ -94,6 +101,11 @@ class StreamHub:
                         self._buffers.setdefault(sid, [])
                         self._done[sid] = False
                         sid_future.set_result(sid)
+                        # Attach any images first; the gateway queues them for the
+                        # next prompt.submit (processed in order on this socket).
+                        for i, img in enumerate(images):
+                            await ws.send(_rpc(10 + i, "image.attach_bytes",
+                                               {"session_id": sid, "content_base64": img}))
                         await ws.send(_rpc(2, "prompt.submit",
                                            {"session_id": sid, "text": message}))
                         if requested_sid is None:

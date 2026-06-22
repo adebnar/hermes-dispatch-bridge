@@ -48,8 +48,8 @@ class FakeHub:
         self.cancelled = None
         self.steered = None
 
-    async def start_run(self, session_id, message, profile=None):
-        self.started = (session_id, message, profile)
+    async def start_run(self, session_id, message, profile=None, images=None):
+        self.started = (session_id, message, profile, images or [])
         return "sess-1"
 
     async def cancel(self, stream_id):
@@ -101,7 +101,7 @@ def test_start_oneshot_opens_ws_run():
     body = r.json()
     assert body["kind"] == "oneshot"
     assert body["stream_id"] == "sess-1" and body["session_id"] == "sess-1"
-    assert hub.started == (None, "compare 3 moving companies", None)
+    assert hub.started == (None, "compare 3 moving companies", None, [])
 
 
 def test_profiles_list_with_active():
@@ -116,7 +116,7 @@ def test_profile_header_forwarded_to_run():
     client, _, hub, _ = make_client()
     client.post("/v1/tasks", json={"message": "do a thing"},
                 headers={"X-Hermes-Profile": "dito"})
-    assert hub.started == (None, "do a thing", "dito")
+    assert hub.started == (None, "do a thing", "dito", [])
 
 
 def test_profile_header_scopes_task_list():
@@ -170,3 +170,10 @@ def test_push_register_and_unregister():
     assert "https://ntfy.sh/dev1" in registry.all()
     r = client.post("/v1/push/unregister", json={"endpoint": "https://ntfy.sh/dev1"})
     assert r.json()["count"] == 0
+
+
+def test_start_with_images_forwarded():
+    client, _, hub, _ = make_client()
+    img = "data:image/png;base64,AAAA"
+    client.post("/v1/tasks", json={"message": "what is this?", "images": [img]})
+    assert hub.started == (None, "what is this?", None, [img])

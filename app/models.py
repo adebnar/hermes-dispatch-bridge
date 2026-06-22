@@ -39,6 +39,8 @@ class StartTaskRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str | None = None
     model: str | None = None
+    # Base64 image data (optionally a data:image/...;base64, prefix) to attach.
+    images: list[str] = Field(default_factory=list)
 
 
 class SteerRequest(BaseModel):
