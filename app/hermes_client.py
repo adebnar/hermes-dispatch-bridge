@@ -110,8 +110,11 @@ class HermesClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def messages(self, session_id: str) -> list[dict]:
-        data = await self._get(f"/api/sessions/{session_id}/messages")
+    async def messages(self, session_id: str, profile: str | None = None) -> list[dict]:
+        path = f"/api/sessions/{session_id}/messages"
+        if profile:
+            path += f"?profile={quote(profile)}"
+        data = await self._get(path)
         return data.get("messages", []) if isinstance(data, dict) else data
 
     async def cron_action(self, action: str, cron_id: str) -> None:

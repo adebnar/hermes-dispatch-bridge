@@ -160,9 +160,10 @@ async def start_task(
 async def task_messages(
     session_id: str,
     hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
 ) -> list[Message]:
     out: list[Message] = []
-    for m in await hermes.messages(session_id):
+    for m in await hermes.messages(session_id, profile=x_hermes_profile):
         role = m.get("role")
         if role not in ("user", "assistant"):
             continue
