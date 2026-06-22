@@ -113,6 +113,7 @@ class InboxItem(BaseModel):
     profile: str = ""
     job_id: str = ""
     job_name: str = ""
+    title: str = ""  # display title — derived from the result's first heading
     status: str = "ok"  # ok | failed | silent
     created_at: float | None = None
     size: int = 0
@@ -120,15 +121,18 @@ class InboxItem(BaseModel):
 
 
 class InboxContent(InboxItem):
-    content: str = ""
+    output: str = ""  # result only (the agent's output), for the reader
+    content: str = ""  # full raw markdown, for "Details"
 
 
 class AlertsRequest(BaseModel):
     job_ids: list[str] = Field(default_factory=list)
+    alert_on_failures: bool | None = None
 
 
 class AlertsResponse(BaseModel):
     job_ids: list[str] = Field(default_factory=list)
+    alert_on_failures: bool = False
 
 
 class PushKeyRequest(BaseModel):

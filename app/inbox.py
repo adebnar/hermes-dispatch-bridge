@@ -36,10 +36,12 @@ class InboxItem:
     profile: str
     job_id: str
     job_name: str
+    title: str  # display title — derived from the result's first heading
     status: str  # "ok" | "failed" | "silent"
     created_at: float | None  # epoch seconds, parsed from the filename
     size: int
     snippet: str
+    output: str = ""  # the result only (no cron header/prompt)
 
 
 def _epoch_from_name(filename: str) -> float | None:
@@ -68,6 +70,9 @@ def _profile_roots(hermes_root: str) -> list[tuple[str, Path]]:
     return out
 
 
+_HEADING_RE = re.compile(r"^#{1,6}\s*(.+?)\s*$")
+
+
 def _parse_header(text: str) -> tuple[str, str]:
     """Return (job_name, status) from a deliverable's markdown header."""
     name_m = _NAME_RE.search(text)
@@ -77,18 +82,59 @@ def _parse_header(text: str) -> tuple[str, str]:
         status = "failed"
         name = name[: -len("(FAILED)")].strip()
     body = text.split("\n---\n", 1)[-1].strip()
-    if body == "[SILENT]" or "## Error" in text:
-        status = "failed" if "## Error" in text else "silent"
+    if "## Error" in text:
+        status = "failed"
+    elif body == "[SILENT]":
+        status = "silent"
     return name, status
 
 
-def _snippet(text: str, limit: int = 240) -> str:
-    """First meaningful line(s) of the body, after the metadata header."""
-    body = text.split("\n---\n", 1)[-1].strip() if "\n---\n" in text else text
-    # Drop a leading "## Error"/"## Prompt" heading from the snippet.
-    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-    snippet = " ".join(lines)
-    return snippet[:limit]
+def _result(text: str, job_name: str) -> str:
+    """The agent's output only — strip the cron header/prompt/metadata.
+
+    Layout written by cron/jobs.py is: header + (## Prompt …) + "---" + output,
+    or for failures a "## Error" section with no separator. We take the text
+    after the final separator, fall back to the error block, then to the whole
+    body, and drop a leading heading that just echoes the job name.
+    """
+    if "\n---\n" in text:
+        out = text.split("\n---\n")[-1].strip()
+    elif "## Error" in text:
+        out = text.split("## Error", 1)[1].strip()
+        out = "## Error\n" + out if out else out
+    else:
+        out = text.strip()
+    # Drop a leading heading that duplicates the job name (echoed title).
+    lines = out.splitlines()
+    if lines:
+        m = _HEADING_RE.match(lines[0].strip())
+        if m and m.group(1).strip().lower() == job_name.strip().lower():
+            out = "\n".join(lines[1:]).lstrip("\n")
+    return out
+
+
+_GENERIC_HEADINGS = {"error", "prompt", "output", "result", "summary"}
+
+
+def _derive_title(output: str, job_name: str) -> str:
+    """Use the result's first markdown heading as the title, else the job name."""
+    for line in output.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        m = _HEADING_RE.match(s)
+        if m and m.group(1).strip().lower() not in _GENERIC_HEADINGS:
+            return m.group(1).strip()
+        return job_name
+    return job_name
+
+
+def _snippet(output: str, limit: int = 240) -> str:
+    """First meaningful line(s) of the result, minus a leading heading."""
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    if lines and _HEADING_RE.match(lines[0]):
+        lines = lines[1:]
+    return " ".join(lines)[:limit]
 
 
 class InboxService:
@@ -117,16 +163,18 @@ class InboxService:
             except OSError:
                 continue
             name, status = _parse_header(text)
+            output = _result(text, name)
             rows.append(
                 InboxItem(
                     item_id=f"{prof}/{job_id}/{md.name}",
                     profile=prof,
                     job_id=job_id,
                     job_name=name,
+                    title=_derive_title(output, name),
                     status=status,
                     created_at=_epoch_from_name(md.name) or stat.st_mtime,
                     size=stat.st_size,
-                    snippet=_snippet(text),
+                    snippet=_snippet(output),
                 )
             )
         rows.sort(key=lambda r: r.created_at or 0, reverse=True)
@@ -143,15 +191,18 @@ class InboxService:
             return None
         prof, job_id, fname = item_id.split("/", 2)
         name, status = _parse_header(text)
+        output = _result(text, name)
         item = InboxItem(
             item_id=item_id,
             profile=prof,
             job_id=job_id,
             job_name=name,
+            title=_derive_title(output, name),
             status=status,
             created_at=_epoch_from_name(fname) or stat.st_mtime,
             size=stat.st_size,
-            snippet=_snippet(text),
+            snippet=_snippet(output),
+            output=output,
         )
         return item, text
 
@@ -187,16 +238,26 @@ class InboxWatcher:
         self._pusher = pusher
         self._poll = poll_seconds
         self._seen: set[str] = set()
+        # Jobs we've already alerted a failure for, until they next succeed —
+        # so a job that fails every run alerts once, not on every poll.
+        self._failing: set[str] = set()
         self._task: asyncio.Task | None = None
 
     # --- alert subscriptions (persisted) ---
     def alerts(self) -> list[str]:
         return list(self._store.get("inbox_alerts", []))
 
+    def alert_on_failures(self) -> bool:
+        return bool(self._store.get("inbox_alert_failures", False))
+
     def set_alerts(self, job_ids: list[str]) -> list[str]:
         cleaned = sorted({j.strip() for j in job_ids if j and j.strip()})
         self._store.set("inbox_alerts", cleaned)
         return cleaned
+
+    def set_alert_on_failures(self, enabled: bool) -> bool:
+        self._store.set("inbox_alert_failures", bool(enabled))
+        return bool(enabled)
 
     def start(self) -> None:
         # Seed "seen" with everything that already exists so a restart doesn't
@@ -219,24 +280,38 @@ class InboxWatcher:
             try:
                 await asyncio.sleep(self._poll)
                 subs = set(self.alerts())
-                if not subs:
-                    # Still track new files so enabling alerts later doesn't
-                    # retroactively fire for files seen while disabled.
-                    self._seen |= {i.item_id for i in self._service.list_items(limit=10000)}
-                    continue
+                failures_on = self.alert_on_failures()
                 for item in self._service.list_items(limit=10000):
-                    if item.item_id in self._seen:
-                        continue
+                    first_seen = item.item_id not in self._seen
                     self._seen.add(item.item_id)
-                    if item.job_id in subs:
-                        await self._pusher.publish(
-                            PushMessage(
-                                sessionId=None,
-                                title=f"📥 {item.job_name}",
-                                status=item.snippet[:120] or "New result in your Inbox",
-                                done=True,
-                            )
+                    # A success clears a job's failing-streak so its next failure
+                    # can alert again.
+                    if item.status != "failed":
+                        self._failing.discard(item.job_id)
+                    if not first_seen:
+                        continue
+
+                    subscribed = item.job_id in subs
+                    failure_alert = (
+                        failures_on
+                        and item.status == "failed"
+                        and item.job_id not in self._failing
+                    )
+                    if item.status == "failed":
+                        self._failing.add(item.job_id)
+                    if not (subscribed or failure_alert):
+                        continue
+
+                    failed = item.status == "failed"
+                    await self._pusher.publish(
+                        PushMessage(
+                            sessionId=None,
+                            title=("⚠️ " if failed else "📥 ") + (item.title or item.job_name),
+                            status=item.snippet[:120]
+                            or ("Run failed" if failed else "New result in your Inbox"),
+                            done=True,
                         )
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - watcher must never die

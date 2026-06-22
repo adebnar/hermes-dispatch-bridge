@@ -397,6 +397,7 @@ async def list_inbox(
             profile=i.profile,
             job_id=i.job_id,
             job_name=i.job_name,
+            title=i.title,
             status=i.status,
             created_at=i.created_at,
             size=i.size,
@@ -420,17 +421,22 @@ async def read_inbox(
         profile=i.profile,
         job_id=i.job_id,
         job_name=i.job_name,
+        title=i.title,
         status=i.status,
         created_at=i.created_at,
         size=i.size,
         snippet=i.snippet,
+        output=i.output,
         content=content,
     )
 
 
 @router.get("/inbox/alerts", response_model=AlertsResponse)
 async def get_alerts(watcher: InboxWatcher = Depends(get_watcher)) -> AlertsResponse:
-    return AlertsResponse(job_ids=watcher.alerts())
+    return AlertsResponse(
+        job_ids=watcher.alerts(),
+        alert_on_failures=watcher.alert_on_failures(),
+    )
 
 
 @router.put("/inbox/alerts", response_model=AlertsResponse)
@@ -438,7 +444,13 @@ async def set_alerts(
     body: AlertsRequest,
     watcher: InboxWatcher = Depends(get_watcher),
 ) -> AlertsResponse:
-    return AlertsResponse(job_ids=watcher.set_alerts(body.job_ids))
+    job_ids = watcher.set_alerts(body.job_ids)
+    failures = (
+        watcher.set_alert_on_failures(body.alert_on_failures)
+        if body.alert_on_failures is not None
+        else watcher.alert_on_failures()
+    )
+    return AlertsResponse(job_ids=job_ids, alert_on_failures=failures)
 
 
 @router.post("/audio/transcribe", response_model=TranscribeResponse)

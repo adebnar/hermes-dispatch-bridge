@@ -18,7 +18,13 @@ SAMPLE = """# Cron Job: Daily digest
 **Run Time:** 2026-06-22 09:00:25
 **Schedule:** 0 9 * * *
 
+## Prompt
+
+Create a digest.
+
 ---
+
+# This Week's Priorities
 
 Top priority today: ship the inbox feature. Second: review PRs.
 """
@@ -68,9 +74,34 @@ def test_list_inbox_parses_header_and_status(tmp_path):
     assert len(rows) == 2
     # newest first (2026-06-22 > 2026-06-21)
     assert rows[0]["job_name"] == "Daily digest" and rows[0]["status"] == "ok"
+    # title comes from the result's first heading, not the cron job name.
+    assert rows[0]["title"] == "This Week's Priorities"
+    # snippet is the result only — no cron prompt/header text leaking in.
     assert "ship the inbox feature" in rows[0]["snippet"]
+    assert "Create a digest" not in rows[0]["snippet"]
     failed = next(r for r in rows if r["job_id"] == "def456")
     assert failed["status"] == "failed" and failed["job_name"] == "Email triage"
+    # generic "Error" heading must not become the title.
+    assert failed["title"] == "Email triage"
+
+
+def test_read_inbox_output_excludes_cron_header(tmp_path):
+    client, _, _ = _client(tmp_path)
+    item_id = client.get("/v1/inbox").json()[0]["id"]
+    body = client.get("/v1/inbox/item", params={"id": item_id}).json()
+    assert "ship the inbox feature" in body["output"]
+    assert "## Prompt" not in body["output"]  # result only
+    assert "## Prompt" in body["content"]  # raw still available for Details
+
+
+def test_alerts_failure_flag_round_trip(tmp_path):
+    client, _, _ = _client(tmp_path)
+    assert client.get("/v1/inbox/alerts").json()["alert_on_failures"] is False
+    r = client.put("/v1/inbox/alerts", json={"job_ids": [], "alert_on_failures": True})
+    assert r.json()["alert_on_failures"] is True
+    # Omitting the flag leaves it unchanged.
+    r = client.put("/v1/inbox/alerts", json={"job_ids": ["x"]})
+    assert r.json()["alert_on_failures"] is True
 
 
 def test_list_inbox_scoped_by_profile(tmp_path):
@@ -135,7 +166,39 @@ def test_watcher_pushes_only_for_subscribed_new_files(tmp_path):
 
     asyncio.run(scenario())
     assert len(pusher.sent) == 1
-    assert "Daily digest" in pusher.sent[0].title
+    assert "This Week's Priorities" in pusher.sent[0].title
+
+
+def test_watcher_failure_alerts_dedupe_until_success(tmp_path):
+    _seed(tmp_path)
+    inbox = InboxService(str(tmp_path))
+    store = StateStore(str(tmp_path / "state.json"))
+    pusher = _RecordingPusher()
+    watcher = InboxWatcher(inbox, store, pusher, poll_seconds=0.01)
+    jobdir = tmp_path / "cron" / "output" / "fails"
+    jobdir.mkdir(parents=True)
+
+    def write(name, ok):
+        body = SAMPLE if ok else FAILED
+        (jobdir / name).write_text(body)
+
+    async def scenario():
+        watcher.set_alert_on_failures(True)  # global; "fails" job is NOT bell-subscribed
+        watcher.start()
+        write("2026-06-23_01-00-00.md", ok=False)
+        await asyncio.sleep(0.05)
+        write("2026-06-23_02-00-00.md", ok=False)  # still failing → no new alert
+        await asyncio.sleep(0.05)
+        write("2026-06-23_03-00-00.md", ok=True)  # recovered → clears streak
+        await asyncio.sleep(0.05)
+        write("2026-06-23_04-00-00.md", ok=False)  # fails again → alerts again
+        await asyncio.sleep(0.05)
+        await watcher.stop()
+
+    asyncio.run(scenario())
+    # Two distinct failing streaks → two alerts (not three failures, not the success).
+    assert len(pusher.sent) == 2
+    assert all("⚠️" in m.title for m in pusher.sent)
 
 
 def test_crypto_round_trip():
