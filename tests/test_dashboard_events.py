@@ -52,3 +52,9 @@ def test_token_drops_from_push_but_completed_pushes():
 def test_to_app_frame_roundtrips_token():
     name, data = to_app_frame(map_event("message.delta", {"text": "hi"}))
     assert name == "token" and '"text": "hi"' in data
+
+
+def test_tool_started_and_call_map_to_tool():
+    assert map_event("tool.started", {"name": "gmail"}).type == "tool"
+    assert map_event("tool.call", {"name": "notion"}).name == "notion"
+    assert map_event("tool.completed", {"tool_id": "x"}).type == "status"

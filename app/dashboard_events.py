@@ -24,15 +24,16 @@ def map_event(etype: str, payload: dict | None) -> SseEvent:
         return SseEvent("token", text=str(p.get("text", "")))
     if t in ("reasoning.delta", "reasoning.available", "thinking.delta"):
         return SseEvent("reasoning", text=str(p.get("text", "")))
-    if t in ("tool.start", "tool.generating", "tool.progress"):
-        return SseEvent(
-            "tool",
-            name=str(p.get("name") or "tool"),
-            text=str(p.get("preview") or p.get("context") or ""),
-        )
-    if t == "tool.complete":
+    if t in ("tool.complete", "tool.completed", "tool.call_end"):
         # Completion of a single tool is not worth a push line on its own.
         return SseEvent("status", text="")
+    if t.startswith("tool."):
+        # tool.start/started/call/generating/progress/… → surface the tool.
+        return SseEvent(
+            "tool",
+            name=str(p.get("name") or p.get("tool") or "tool"),
+            text=str(p.get("preview") or p.get("context") or ""),
+        )
     if t == "session.info":
         return SseEvent("status", text="")  # info only; dropped from push
     if t == "message.start":
