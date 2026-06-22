@@ -78,25 +78,29 @@ class StreamHub:
         try:
             ws_url = await self._client.ws_url()
             async with websockets.connect(ws_url, max_size=None) as ws:
+                # New task -> session.create; existing task -> session.resume to
+                # LOAD it on this socket (prompt.submit alone won't run otherwise).
                 if requested_sid is None:
-                    create_params: dict = {"source": "hermes-dispatch", "title": message[:60]}
+                    params: dict = {"source": "hermes-dispatch", "title": message[:60]}
                     if profile:
-                        create_params["profile"] = profile
-                    await ws.send(_rpc(1, "session.create", create_params))
+                        params["profile"] = profile
+                    await ws.send(_rpc(1, "session.create", params))
+                else:
+                    params = {"session_id": requested_sid}
+                    if profile:
+                        params["profile"] = profile
+                    await ws.send(_rpc(1, "session.resume", params))
+
                 async for raw in ws:
                     msg = json.loads(raw)
 
-                    # Resolve the session id, then submit the prompt.
+                    # Wait for the create/resume result (id==1), then submit.
                     if not sid_future.done():
-                        if requested_sid is None:
-                            if msg.get("id") == 1:
-                                sid = (msg.get("result") or {}).get("session_id")
-                                if not sid:
-                                    raise RuntimeError("session.create returned no session_id")
-                            else:
-                                continue  # wait for the create result
-                        else:
-                            sid = requested_sid
+                        if msg.get("id") != 1:
+                            continue  # ignore gateway.ready etc. until session ready
+                        sid = (msg.get("result") or {}).get("session_id") or requested_sid
+                        if not sid:
+                            raise RuntimeError("no session_id from create/resume")
                         self._conns[sid] = ws
                         self._buffers.setdefault(sid, [])
                         self._done[sid] = False
@@ -108,8 +112,7 @@ class StreamHub:
                                                {"session_id": sid, "content_base64": img}))
                         await ws.send(_rpc(2, "prompt.submit",
                                            {"session_id": sid, "text": message}))
-                        if requested_sid is None:
-                            continue  # the id==1 message carried no event
+                        continue  # the id==1 message carried no event
 
                     if msg.get("method") != "event":
                         continue
