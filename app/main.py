@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
@@ -180,6 +181,25 @@ async def steer_task(
     return {"ok": True}
 
 
+def _cron_expr(r: dict) -> str:
+    sched = r.get("schedule_display") or r.get("schedule") or r.get("cron")
+    if isinstance(sched, dict):
+        return str(sched.get("expr") or sched.get("display") or "")
+    return str(sched or "")
+
+
+def _epoch(value) -> float | None:
+    """Coerce a dashboard time (ISO string or epoch) to epoch seconds."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except ValueError:
+        return None
+
+
 @router.get("/schedules", response_model=list[Schedule])
 async def list_schedules(hermes: HermesClient = Depends(get_hermes)) -> list[Schedule]:
     rows = await hermes.crons()
@@ -187,10 +207,12 @@ async def list_schedules(hermes: HermesClient = Depends(get_hermes)) -> list[Sch
         Schedule(
             id=r.get("id", ""),
             name=r.get("name") or "Scheduled task",
-            cron=r.get("schedule") or r.get("cron") or "",
-            paused=bool(r.get("paused", not r.get("enabled", True))),
-            next_run=r.get("next_run") or r.get("next_run_at"),
-            last_run=r.get("last_run") or r.get("last_run_at"),
+            cron=_cron_expr(r),
+            paused=bool(
+                r.get("paused_at") or r.get("state") == "paused" or not r.get("enabled", True)
+            ),
+            next_run=_epoch(r.get("next_run") or r.get("next_run_at")),
+            last_run=_epoch(r.get("last_run") or r.get("last_run_at")),
         )
         for r in rows
     ]

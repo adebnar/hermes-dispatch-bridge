@@ -27,7 +27,10 @@ class FakeHermes:
         return "personal"
 
     async def crons(self):
-        return [{"id": "c1", "name": "Daily digest", "schedule": "0 9 * * *", "paused": True}]
+        return [{
+            "id": "c1", "name": "Daily digest", "schedule_display": "0 9 * * *",
+            "state": "paused", "paused_at": "2026-06-20T00:00:00-05:00", "enabled": False,
+        }]
 
     async def mcp_servers(self):
         return [{"name": "gmail", "enabled": True, "tools": ["a", "b", "c"]}]
@@ -177,3 +180,24 @@ def test_start_with_images_forwarded():
     img = "data:image/png;base64,AAAA"
     client.post("/v1/tasks", json={"message": "what is this?", "images": [img]})
     assert hub.started == (None, "what is this?", None, [img])
+
+
+def test_schedules_handles_dashboard_dict_schedule_and_iso_dates():
+    client, hermes, _, _ = make_client()
+
+    async def real_crons():
+        return [{
+            "id": "c9", "name": "Digest",
+            "schedule": {"kind": "cron", "expr": "0 9 * * *"},
+            "schedule_display": "0 9 * * *", "state": "scheduled", "enabled": True,
+            "next_run_at": "2026-06-22T09:00:00-05:00",
+            "last_run_at": "2026-06-21T09:00:05-05:00",
+        }]
+
+    hermes.crons = real_crons
+    r = client.get("/v1/schedules")
+    assert r.status_code == 200
+    body = r.json()[0]
+    assert body["cron"] == "0 9 * * *"
+    assert body["paused"] is False
+    assert body["next_run"] is not None
