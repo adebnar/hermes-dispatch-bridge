@@ -201,8 +201,16 @@ def _epoch(value) -> float | None:
 
 
 @router.get("/schedules", response_model=list[Schedule])
-async def list_schedules(hermes: HermesClient = Depends(get_hermes)) -> list[Schedule]:
+async def list_schedules(
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> list[Schedule]:
     rows = await hermes.crons()
+    if x_hermes_profile:
+        rows = [
+            r for r in rows
+            if (r.get("profile_name") or r.get("profile")) == x_hermes_profile
+        ]
     return [
         Schedule(
             id=r.get("id", ""),

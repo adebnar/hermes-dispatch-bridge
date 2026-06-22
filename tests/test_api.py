@@ -201,3 +201,17 @@ def test_schedules_handles_dashboard_dict_schedule_and_iso_dates():
     assert body["cron"] == "0 9 * * *"
     assert body["paused"] is False
     assert body["next_run"] is not None
+
+
+def test_schedules_scoped_by_profile():
+    client, hermes, _, _ = make_client()
+
+    async def crons_multi():
+        return [
+            {"id": "a", "name": "p1", "schedule_display": "0 9 * * *", "profile_name": "personal"},
+            {"id": "b", "name": "d1", "schedule_display": "0 9 * * *", "profile_name": "dito"},
+        ]
+
+    hermes.crons = crons_multi
+    rows = client.get("/v1/schedules", headers={"X-Hermes-Profile": "dito"}).json()
+    assert [r["id"] for r in rows] == ["b"]
