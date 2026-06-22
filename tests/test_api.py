@@ -40,7 +40,7 @@ class FakeHermes:
         self.cron_profile = profile
         return {"id": "c2", "name": name, "schedule": schedule}
 
-    async def messages(self, session_id):
+    async def messages(self, session_id, profile=None):
         return [
             {"role": "system", "content": "ignore me"},
             {"role": "user", "content": "hi there"},
