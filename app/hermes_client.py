@@ -141,6 +141,19 @@ class HermesClient:
         data = await self._get(path)
         return data.get("messages", []) if isinstance(data, dict) else data
 
+    async def update_cron(
+        self, cron_id: str, updates: dict[str, Any], profile: str | None = None
+    ) -> dict:
+        await self._ensure_token()
+        url = f"{self._base}/api/cron/jobs/{cron_id}"
+        if profile:
+            url += f"?profile={quote(profile)}"
+        resp = await self._client.put(
+            url, headers=self._headers(), json={"updates": updates}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def cron_action(self, action: str, cron_id: str) -> None:
         await self._ensure_token()
         if action == "delete":

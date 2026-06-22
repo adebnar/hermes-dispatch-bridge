@@ -11,6 +11,7 @@ class FakeHermes:
     def __init__(self):
         self.created_cron = None
         self.cron_actions = []
+        self.updated_cron = None
         self.sessions_profile = "unset"
 
     async def sessions(self, profile=None):
@@ -49,6 +50,10 @@ class FakeHermes:
 
     async def cron_action(self, action, cron_id):
         self.cron_actions.append((action, cron_id))
+
+    async def update_cron(self, cron_id, updates, profile=None):
+        self.updated_cron = (cron_id, updates, profile)
+        return {"id": cron_id, **updates}
 
 
 class FakeHub:
@@ -159,6 +164,25 @@ def test_schedule_action_rejects_unknown():
     client, _, _, _ = make_client()
     assert client.post("/v1/schedules/c1/frobnicate").status_code == 400
     assert client.post("/v1/schedules/c1/pause").status_code == 200
+
+
+def test_update_schedule_sends_only_provided_fields():
+    client, fake, _, _ = make_client()
+    r = client.patch(
+        "/v1/schedules/c1",
+        json={"name": "New name", "schedule": "every 10m"},
+        headers={"X-Hermes-Profile": "personal"},
+    )
+    assert r.status_code == 200
+    cron_id, updates, profile = fake.updated_cron
+    assert cron_id == "c1"
+    assert updates == {"name": "New name", "schedule": "every 10m"}
+    assert profile == "personal"
+
+
+def test_update_schedule_rejects_empty():
+    client, _, _, _ = make_client()
+    assert client.patch("/v1/schedules/c1", json={}).status_code == 400
 
 
 def test_mcp_list_maps_dashboard_shape():

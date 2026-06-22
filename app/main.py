@@ -26,6 +26,7 @@ from .models import (
     ProfilesResponse,
     PushRegisterRequest,
     Schedule,
+    ScheduleUpdateRequest,
     SetModelRequest,
     StartTaskRequest,
     StartTaskResponse,
@@ -267,6 +268,7 @@ async def list_schedules(
             id=r.get("id", ""),
             name=r.get("name") or "Scheduled task",
             cron=_cron_expr(r),
+            prompt=str(r.get("prompt") or ""),
             paused=bool(
                 r.get("paused_at") or r.get("state") == "paused" or not r.get("enabled", True)
             ),
@@ -275,6 +277,26 @@ async def list_schedules(
         )
         for r in rows
     ]
+
+
+@router.patch("/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: str,
+    body: ScheduleUpdateRequest,
+    hermes: HermesClient = Depends(get_hermes),
+    x_hermes_profile: str | None = Header(default=None),
+) -> dict:
+    updates: dict[str, str] = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.prompt is not None:
+        updates["prompt"] = body.prompt
+    if body.schedule is not None and body.schedule.strip():
+        updates["schedule"] = body.schedule.strip()
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    await hermes.update_cron(schedule_id, updates, profile=x_hermes_profile)
+    return {"ok": True}
 
 
 @router.post("/schedules/{schedule_id}/{action}")

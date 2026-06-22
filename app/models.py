@@ -13,9 +13,19 @@ class Schedule(BaseModel):
     id: str
     name: str = ""
     cron: str = ""
+    prompt: str = ""
     paused: bool = False
     next_run: float | None = None
     last_run: float | None = None
+
+
+class ScheduleUpdateRequest(BaseModel):
+    """Editable fields of a cron job. Unset fields are left unchanged."""
+
+    name: str | None = None
+    prompt: str | None = None
+    # Natural-language or cron expr, e.g. "every 10m" or "0 9 * * *".
+    schedule: str | None = None
 
 
 class Message(BaseModel):
