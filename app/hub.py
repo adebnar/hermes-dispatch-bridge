@@ -3,8 +3,13 @@
 One WebSocket per run: the hub does ``session.create`` (or reuses a session id)
 then ``prompt.submit``, consumes ``event`` notifications, maps them to the
 bridge's normalized frames, and fans them out to mobile SSE subscribers + push.
-The run keeps going (and pushing) even if the phone disconnects. ``cancel`` and
-``steer`` are sent on the same live connection.
+
+Each run's frames are **buffered and replayed** to subscribers that connect late
+(the app starts a run with one request, then opens the SSE stream with another —
+so a fast run can finish before the stream connects). Buffers are retained for a
+short TTL after completion so a late or reconnecting client still gets the full
+transcript. The run keeps going (and pushing) even if the phone disconnects.
+``cancel`` and ``steer`` are sent on the same live connection.
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ from .sse import format_frame, is_terminal
 
 _SENTINEL = object()
 _START_TIMEOUT = 25.0
+_BUFFER_CAP = 5000          # max frames retained per run
+_RETAIN_AFTER_DONE = 600.0  # seconds to keep a finished run's buffer for late clients
 
 
 def _rpc(rid: int, method: str, params: dict) -> str:
@@ -36,6 +43,8 @@ class StreamHub:
         self._subs: dict[str, set[asyncio.Queue]] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._conns: dict[str, object] = {}  # sid -> websocket
+        self._buffers: dict[str, list[tuple]] = {}  # sid -> [(event_name, data), …]
+        self._done: dict[str, bool] = {}
 
     async def start_run(
         self, session_id: str | None, message: str, profile: str | None = None
@@ -48,7 +57,6 @@ class StreamHub:
         except TimeoutError:
             task.cancel()
             raise RuntimeError("timed out starting run") from None
-        self._subs.setdefault(sid, set())
         self._tasks[sid] = task
         return sid
 
@@ -83,6 +91,8 @@ class StreamHub:
                         else:
                             sid = requested_sid
                         self._conns[sid] = ws
+                        self._buffers.setdefault(sid, [])
+                        self._done[sid] = False
                         sid_future.set_result(sid)
                         await ws.send(_rpc(2, "prompt.submit",
                                            {"session_id": sid, "text": message}))
@@ -94,7 +104,7 @@ class StreamHub:
                     params = msg.get("params") or {}
                     ev = map_event(params.get("type"), params.get("payload"))
                     name, data = to_app_frame(ev)
-                    self._broadcast(sid, (name, data))
+                    self._emit(sid, (name, data))
                     push = to_push(ev, session_id=sid)
                     if push is not None:
                         await self._publisher.publish(push)
@@ -106,21 +116,49 @@ class StreamHub:
             if not sid_future.done():
                 sid_future.set_exception(RuntimeError("run failed to start"))
             if sid:
-                self._broadcast(sid, _SENTINEL)
+                self._done[sid] = True
+                self._broadcast_sentinel(sid)
                 self._conns.pop(sid, None)
                 self._tasks.pop(sid, None)
-                self._subs.pop(sid, None)
+                asyncio.create_task(self._expire(sid))
 
-    def _broadcast(self, sid: str | None, item: object) -> None:
+    def _emit(self, sid: str | None, frame: tuple) -> None:
         if sid is None:
             return
+        buf = self._buffers.setdefault(sid, [])
+        buf.append(frame)
+        if len(buf) > _BUFFER_CAP:
+            del buf[: len(buf) - _BUFFER_CAP]
         for q in list(self._subs.get(sid, ())):
-            q.put_nowait(item)
+            q.put_nowait(frame)
+
+    def _broadcast_sentinel(self, sid: str) -> None:
+        for q in list(self._subs.get(sid, ())):
+            q.put_nowait(_SENTINEL)
+
+    async def _expire(self, sid: str) -> None:
+        await asyncio.sleep(_RETAIN_AFTER_DONE)
+        self._buffers.pop(sid, None)
+        self._done.pop(sid, None)
+        self._subs.pop(sid, None)
 
     async def subscribe(self, stream_id: str) -> AsyncIterator[str]:
+        # Unknown / expired run: nothing to stream.
+        if stream_id not in self._buffers and stream_id not in self._tasks:
+            return
+
+        # Snapshot the buffer and register for live frames atomically (no await
+        # between, so the single-threaded loop can't drop a frame in the gap).
         queue: asyncio.Queue = asyncio.Queue()
-        self._subs.setdefault(stream_id, set()).add(queue)
+        buffered = list(self._buffers.get(stream_id, ()))
+        done = self._done.get(stream_id, False)
+        if not done:
+            self._subs.setdefault(stream_id, set()).add(queue)
         try:
+            for event_name, data in buffered:
+                yield format_frame(event_name, data)
+            if done:
+                return
             while True:
                 item = await queue.get()
                 if item is _SENTINEL:
@@ -128,7 +166,9 @@ class StreamHub:
                 event_name, data = item
                 yield format_frame(event_name, data)
         finally:
-            self._subs.get(stream_id, set()).discard(queue)
+            subs = self._subs.get(stream_id)
+            if subs is not None:
+                subs.discard(queue)
 
     async def cancel(self, stream_id: str) -> None:
         ws = self._conns.get(stream_id)
