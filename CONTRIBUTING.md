@@ -23,4 +23,4 @@ uv run pytest -q
 
 ## Pull requests
 Keep them focused; describe what changed and how you verified it. CI (ruff +
-pytest) must pass. Contributions are licensed under [Apache-2.0](LICENSE).
+pytest) must pass. Contributions are licensed under [GPL-3.0](LICENSE).
