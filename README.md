@@ -1,5 +1,10 @@
 # Hermes Dispatch Bridge
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge)](LICENSE)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20the%20project-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/andrew65386)
+
+> 💜 **Find this useful?** [**☕ Support development on Ko-fi →**](https://ko-fi.com/andrew65386)
+
 The **mobile bridge sidecar** for [Hermes Dispatch](https://github.com/adebnar/hermes-dispatch-android).
 It sits next to your self-hosted Hermes agent (fronting the **hermes-agent
 dashboard** — REST + JSON-RPC-over-WebSocket; verified against v0.16.0, see
@@ -109,5 +114,12 @@ uv run ruff check .
 uv run pytest -q
 ```
 
+Branches: **`main`** is stable; **`development`** is active work (paired with the app's beta pre-releases). PRs target `development`.
+
+## Support this project
+If this is useful to you, please consider supporting development:
+
+**[☕ Buy me a coffee on Ko-fi →](https://ko-fi.com/andrew65386)** — thank you! 🙏
+
 ## License
-[Apache-2.0](LICENSE).
+[GPL-3.0](LICENSE) © Andrew Debnar. Free software under the GNU General Public License v3.

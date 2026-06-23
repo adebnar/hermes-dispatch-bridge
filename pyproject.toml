@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Mobile bridge sidecar for Hermes Dispatch — fronts a self-hosted Hermes agent, holds runs server-side, and pushes progress."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "GPL-3.0-or-later" }
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
