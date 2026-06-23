@@ -516,13 +516,18 @@ async def list_models(
 ) -> ModelsResponse:
     opts = await hermes.model_options(profile=x_hermes_profile)
     providers = opts.get("providers", []) if isinstance(opts, dict) else []
-    # Offer models from the active provider (and any user-defined ones).
+    # Offer every model the server actually exposes — i.e. any provider that
+    # returns a non-empty model list (configured / has a key / is reachable).
+    # Providers with no models (no key, not set up) are skipped. Current provider
+    # first so the active model surfaces at the top of the list.
     out: list[ModelOption] = []
-    for p in providers:
-        if not (p.get("is_current") or p.get("is_user_defined")):
+    ordered = sorted(providers, key=lambda p: 0 if p.get("is_current") else 1)
+    for p in ordered:
+        models = p.get("models") or []
+        if not models:
             continue
         slug = p.get("slug", "")
-        for m in p.get("models", []):
+        for m in models:
             out.append(ModelOption(provider=slug, model=m))
     return ModelsResponse(models=out, current=opts.get("model"))
 

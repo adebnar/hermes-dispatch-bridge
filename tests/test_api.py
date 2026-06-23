@@ -70,6 +70,20 @@ class FakeHermes:
         self.transcribed = (len(data), filename)
         return "hello world"
 
+    async def model_options(self, profile=None):
+        return {
+            "model": "anthropic/claude",
+            "provider": "nous",
+            "providers": [
+                {"slug": "anthropic", "is_current": False, "models": ["claude-x"]},
+                {"slug": "empty-prov", "is_current": False, "models": []},
+                {"slug": "nous", "is_current": True, "models": ["anthropic/claude", "openai/gpt"]},
+            ],
+        }
+
+    async def set_profile_model(self, profile, provider, model):
+        self.model_set = (profile, provider, model)
+
 
 class FakeHub:
     """Stands in for the WS StreamHub."""
@@ -253,6 +267,23 @@ def test_push_key_validates_length():
     # Clearing disables encryption.
     r = client.post("/v1/push/key", json={"key": ""})
     assert r.json()["encrypted"] is False
+
+
+def test_list_models_includes_all_providers_with_models_current_first():
+    client, _, _, _ = make_client()
+    body = client.get("/v1/models", headers={"X-Hermes-Profile": "personal"}).json()
+    slugs = [m["provider"] for m in body["models"]]
+    assert "nous" in slugs and "anthropic" in slugs   # both exposed
+    assert "empty-prov" not in slugs                  # no models → skipped
+    assert slugs[0] == "nous"                          # current provider first
+    assert body["current"] == "anthropic/claude"
+
+
+def test_set_model_passes_provider_for_profile():
+    client, fake, _, _ = make_client()
+    client.post("/v1/models/set", json={"model": "g1", "provider": "gemini"},
+                headers={"X-Hermes-Profile": "personal"})
+    assert fake.model_set == ("personal", "gemini", "g1")
 
 
 def test_mcp_list_maps_dashboard_shape():
