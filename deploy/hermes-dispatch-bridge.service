@@ -1,0 +1,24 @@
+# Hermes Dispatch Bridge — systemd user service (Linux).
+# Install: see README "Run on boot → Linux (systemd)".
+#   sed "s|__BRIDGE_DIR__|$(pwd)|g" deploy/hermes-dispatch-bridge.service \
+#     > ~/.config/systemd/user/hermes-dispatch-bridge.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hermes-dispatch-bridge
+#   loginctl enable-linger "$USER"      # start at boot without an active login
+[Unit]
+Description=Hermes Dispatch Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__BRIDGE_DIR__
+# run-bridge.sh uses `uv` from PATH (or $UV_BIN). If uv lives in ~/.local/bin,
+# either ensure it's on PATH for the user session or uncomment + set this:
+# Environment=UV_BIN=%h/.local/bin/uv
+ExecStart=/bin/bash __BRIDGE_DIR__/scripts/run-bridge.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

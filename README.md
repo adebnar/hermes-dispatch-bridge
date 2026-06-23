@@ -58,9 +58,19 @@ Split into **🧑 what a human does** and **🤖 what you can ask your Hermes ag
 ### 🧑 Human
 1. Have the **hermes-agent dashboard** running (`hermes dashboard` / the gateway
    web UI, default port 9119), reachable by this bridge.
-2. Copy `.env.example` → `.env` and fill in: `HERMES_URL`, `HERMES_TOKEN`
-   (the dashboard's `window.__HERMES_SESSION_TOKEN__`), a strong random
-   `BRIDGE_TOKEN`, and (for push) `NTFY_BASE_URL` + `NTFY_TOPIC`.
+2. Copy `.env.example` → `.env` and fill it in. **Generate the secrets yourself**
+   (locally) — don't have an assistant create or store them:
+   - `HERMES_URL` — your dashboard, e.g. `http://127.0.0.1:9119`.
+   - `HERMES_TOKEN` — **leave empty** for a local dashboard (the bridge auto-reads
+     `window.__HERMES_SESSION_TOKEN__`); set it only for a remote/authenticated one.
+   - `BRIDGE_TOKEN` — what the app authenticates with. Generate a strong one:
+     ```bash
+     python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # or: openssl rand -base64 32
+     ```
+   - `NTFY_BASE_URL` + `NTFY_TOPIC` (for push) — use an **unguessable** topic:
+     ```bash
+     echo "hermes-$(python3 -c "import secrets; print(secrets.token_hex(8))")"
+     ```
 3. Run it:
    ```bash
    uv run uvicorn app.main:app --host 0.0.0.0 --port 8099   # or: docker compose up -d
@@ -68,9 +78,11 @@ Split into **🧑 what a human does** and **🤖 what you can ask your Hermes ag
 4. In the Android app, point the bridge URL at this service and use the `BRIDGE_TOKEN`.
 
 ### 🤖 Ask Hermes
-> "Generate a strong random `BRIDGE_TOKEN` and an unguessable `NTFY_TOPIC`, and write them into a `.env` for hermes-dispatch-bridge alongside my `HERMES_URL`/`HERMES_TOKEN`."
->
-> "Add this bridge to my existing docker-compose so it starts alongside my Hermes dashboard and ntfy, on the same network, with a healthcheck on `/health`."
+> ⚠️ **Generate your own secrets.** `BRIDGE_TOKEN` and `NTFY_TOPIC` are yours to
+> create (step 2) — don't ask the agent to generate or write them. The prompts
+> below are safe because they don't touch your secrets.
+
+> "Add this bridge to my existing docker-compose so it starts alongside my Hermes dashboard and ntfy, on the same network, with a healthcheck on `/health`. Leave my `.env` and secrets to me."
 >
 > "Improve the cron classifier: create a Hermes skill `classify_schedule` that, given a task description, returns `{is_cron, cron}` and call it from the bridge instead of the regex heuristic."
 
@@ -93,6 +105,7 @@ The bridge listens on **port 8099**. If you skip Serve, point the app at `http:/
 tailscale ip -4          # encrypted transport → http://100.x.y.z:8099
 ipconfig getifaddr en0   # macOS LAN  → http://192.168.x.y:8099
 hostname -I              # Linux LAN  (first address)
+ipconfig                 # Windows LAN → the IPv4 Address of your active adapter
 ```
 
 The token to enter in the app is your `BRIDGE_TOKEN`:
@@ -100,16 +113,55 @@ The token to enter in the app is your `BRIDGE_TOKEN`:
 grep BRIDGE_TOKEN .env
 ```
 
-## Run on boot (macOS launchd)
-A ready-to-use agent template is in [`deploy/`](deploy/):
+## Run on boot
+
+Ready-to-use templates are in [`deploy/`](deploy/). The cross-platform option is
+**Docker** — `docker compose up -d` (with `restart: unless-stopped`) starts the
+bridge on boot on any OS; the native per-OS recipes below are for non-Docker setups.
+
+### macOS (launchd)
 ```bash
 sed "s|__BRIDGE_DIR__|$(pwd)|g" deploy/co.hermesdispatch.bridge.plist \
   > ~/Library/LaunchAgents/co.hermesdispatch.bridge.plist
 launchctl load ~/Library/LaunchAgents/co.hermesdispatch.bridge.plist
 launchctl list | grep hermesdispatch    # status 0 = healthy
 ```
-It runs `scripts/run-bridge.sh` (uvicorn on `0.0.0.0:8099`), restarts on crash, and
-starts at login. Logs to `bridge.log`. (Linux: a `systemd` unit works the same way.)
+Runs `scripts/run-bridge.sh` (uvicorn on `0.0.0.0:8099`), restarts on crash, starts
+at login. Logs to `bridge.log`.
+
+### Linux (systemd)
+A user service template is in [`deploy/hermes-dispatch-bridge.service`](deploy/hermes-dispatch-bridge.service):
+```bash
+mkdir -p ~/.config/systemd/user
+sed "s|__BRIDGE_DIR__|$(pwd)|g" deploy/hermes-dispatch-bridge.service \
+  > ~/.config/systemd/user/hermes-dispatch-bridge.service
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-dispatch-bridge
+systemctl --user status hermes-dispatch-bridge      # active = healthy
+loginctl enable-linger "$USER"                       # start at boot without login
+journalctl --user -u hermes-dispatch-bridge -f       # logs
+```
+`run-bridge.sh` calls `uv` from your `PATH`; if `uv` lives in `~/.local/bin` and
+isn't on the service PATH, set `Environment=UV_BIN=%h/.local/bin/uv` in the unit
+(a commented line is included). Prefer a **system** service (`/etc/systemd/system/`,
+with `User=`)? Drop the `--user`/linger steps and run as root.
+
+### Windows
+The simplest path is **Docker Desktop** or **WSL2** (use the Linux steps inside
+WSL). To run natively without Docker:
+1. Install Python 3.12 + `uv`, then in the repo: `uv venv && uv pip install -e .`
+2. Start it: `uv run uvicorn app.main:app --host 0.0.0.0 --port 8099`
+3. Auto-start on boot — either:
+   - **Task Scheduler** → *Create Task* → trigger "At log on" / "At startup",
+     action `uv` with args `run uvicorn app.main:app --host 0.0.0.0 --port 8099`,
+     *Start in* = the repo folder; or
+   - **[NSSM](https://nssm.cc)** to run it as a real Windows service:
+     `nssm install HermesDispatchBridge uv "run uvicorn app.main:app --host 0.0.0.0 --port 8099"`
+     then set *Startup directory* to the repo and start the service.
+
+> The `scripts/*.sh` helpers (`enable-https.sh`, `run-bridge.sh`) are bash and run on
+> macOS/Linux/WSL. On native Windows use the commands directly, and for HTTPS run
+> `tailscale serve --bg 8099` (the Tailscale client is cross-platform).
 
 ## Develop
 
