@@ -71,6 +71,19 @@ class StartTaskRequest(BaseModel):
     model: str | None = None
     # Base64 image data (optionally a data:image/...;base64, prefix) to attach.
     images: list[str] = Field(default_factory=list)
+    # Managed-file paths (from /v1/files/upload) referenced in the prompt so the
+    # agent's file tools can read them.
+    attachments: list[str] = Field(default_factory=list)
+
+
+class FileUploadRequest(BaseModel):
+    filename: str = Field(min_length=1)
+    # data:<mime>;base64,<...> of the document to attach.
+    data_url: str = Field(min_length=1)
+
+
+class FileUploadResponse(BaseModel):
+    path: str
 
 
 class SteerRequest(BaseModel):

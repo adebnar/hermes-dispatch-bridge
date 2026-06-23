@@ -173,8 +173,44 @@ class HermesClient:
         path = f"/api/sessions/{session_id}/messages"
         if profile:
             path += f"?profile={quote(profile)}"
-        data = await self._get(path)
+        try:
+            data = await self._get(path)
+        except httpx.HTTPStatusError as exc:
+            # A freshly-created session may not be queryable yet ("Session not
+            # found"). That's "no messages", not a server error — don't 500.
+            if exc.response.status_code == 404:
+                return []
+            raise
         return data.get("messages", []) if isinstance(data, dict) else data
+
+    async def upload_file(self, filename: str, data_url: str) -> str:
+        """Upload a document to the dashboard's managed-files area; return its path.
+
+        Local installs have no locked managed root (so a path must be absolute) —
+        we target ~/.hermes/dispatch-uploads. Hosted installs lock to a root, where
+        a bare filename lands inside it; we fall back to that if the absolute path
+        is rejected. The returned path is referenced in the prompt so the agent's
+        file tools can read the attachment.
+        """
+        import os
+        from pathlib import Path
+
+        await self._ensure_token()
+        safe = os.path.basename(filename) or "upload"
+        candidates = [str(Path.home() / ".hermes" / "dispatch-uploads" / safe), safe]
+        last: httpx.Response | None = None
+        for path in candidates:
+            resp = await self._client.post(
+                f"{self._base}/api/files/upload",
+                headers=self._headers(),
+                json={"path": path, "data_url": data_url, "overwrite": True},
+            )
+            if resp.status_code < 300:
+                data = resp.json()
+                return data.get("path") or path
+            last = resp
+        detail = last.text[:200] if last is not None else "no response"
+        raise RuntimeError(f"managed-file upload failed: {detail}")
 
     async def update_cron(
         self, cron_id: str, updates: dict[str, Any], profile: str | None = None

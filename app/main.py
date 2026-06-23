@@ -24,6 +24,8 @@ from .models import (
     ApproveRequest,
     ArchiveRequest,
     ClarifyRequest,
+    FileUploadRequest,
+    FileUploadResponse,
     InboxContent,
     InboxItem,
     McpServer,
@@ -279,11 +281,28 @@ async def start_task(
         )
         return StartTaskResponse(kind="cron", cron=schedule.cron)
 
+    # Reference any uploaded documents by path so the agent's file tools read them.
+    message = body.message
+    if body.attachments:
+        refs = "\n".join(f"[Attached file: {p}]" for p in body.attachments)
+        message = f"{message}\n\n{refs}" if message else refs
+
     # Open a server-held run over the dashboard WS; session id == app stream id.
     sid = await hub.start_run(
-        body.session_id, body.message, profile=x_hermes_profile, images=body.images
+        body.session_id, message, profile=x_hermes_profile, images=body.images
     )
     return StartTaskResponse(kind="oneshot", session_id=sid, stream_id=sid)
+
+
+@router.post("/files/upload", response_model=FileUploadResponse)
+async def upload_file(
+    body: FileUploadRequest,
+    hermes: HermesClient = Depends(get_hermes),
+) -> FileUploadResponse:
+    """Upload a document to the dashboard's managed-files area and return its path
+    (referenced as an attachment when starting a task)."""
+    path = await hermes.upload_file(body.filename, body.data_url)
+    return FileUploadResponse(path=path)
 
 
 @router.get("/tasks/{session_id}/messages", response_model=list[Message])
