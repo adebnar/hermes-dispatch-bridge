@@ -156,6 +156,47 @@ async def list_profiles(hermes: HermesClient = Depends(get_hermes)) -> ProfilesR
     )
 
 
+# end_reason substrings that mean the run actually errored (vs. a normal end like
+# "ws_orphan_reap" or "cron_complete").
+_ERROR_END_REASONS = ("error", "crash", "fail", "exception", "timeout")
+
+
+def _session_state(r: dict) -> str:
+    """Derive a UI run-state from a dashboard session row.
+
+    Returns one of: scheduled | active | done | failed | idle. The dashboard's
+    own ``status`` field is usually null, but ``source`` / ``is_active`` /
+    ``ended_at`` / ``end_reason`` are reliable. The app maps this to its status
+    glyph + the All/Scheduled/Completed segmented control.
+    """
+    src = (r.get("source") or "").lower()
+    sid = str(r.get("id") or r.get("session_id") or "")
+    if src == "cron" or sid.startswith("cron_"):
+        return "scheduled"
+    if r.get("is_active"):
+        return "active"
+    reason = (r.get("end_reason") or "").lower()
+    if any(x in reason for x in _ERROR_END_REASONS):
+        return "failed"
+    if r.get("ended_at") or reason or r.get("message_count"):
+        return "done"
+    return "idle"
+
+
+def _session_updated_at(r: dict) -> float:
+    """Best-effort 'last updated' epoch. The sessions list has no updated_at /
+    created_at keys (only last_active / ended_at / started_at), so the old
+    mapping always yielded 0 — breaking recency sort + grouping."""
+    for k in ("last_active", "ended_at", "started_at", "updated_at", "created_at"):
+        v = r.get(k)
+        if v:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
 @router.get("/tasks", response_model=list[Task])
 async def list_tasks(
     hermes: HermesClient = Depends(get_hermes),
@@ -167,9 +208,9 @@ async def list_tasks(
         Task(
             id=r.get("id") or r.get("session_id", ""),
             title=r.get("title") or _first_message(r) or "Task",
-            status=r.get("status") or r.get("source") or "",
+            status=_session_state(r),
             model=r.get("model"),
-            updated_at=float(r.get("updated_at") or r.get("created_at") or 0),
+            updated_at=_session_updated_at(r),
         )
         for r in rows
     ]
@@ -194,9 +235,9 @@ async def search_tasks(
             Task(
                 id=sid,
                 title=snippet[:80] or "Session",
-                status=r.get("source") or "",
+                status=_session_state(r),
                 model=r.get("model"),
-                updated_at=float(r.get("session_started") or 0),
+                updated_at=_session_updated_at(r) or float(r.get("session_started") or 0),
             )
         )
     return out
