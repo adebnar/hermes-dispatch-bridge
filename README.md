@@ -77,6 +77,14 @@ Split into **🧑 what a human does** and **🤖 what you can ask your Hermes ag
    ```
 4. In the Android app, point the bridge URL at this service and use the `BRIDGE_TOKEN`.
 
+> **Running it all on one machine (the common case).** When the bridge and the
+> Hermes dashboard live on the *same computer*, keep `HERMES_URL=http://127.0.0.1:9119`
+> and leave `HERMES_TOKEN` empty — the bridge reads the dashboard's token locally over
+> loopback. Your **phone isn't on that machine**, so it can't use `127.0.0.1`: give the
+> app the machine's **Tailscale HTTPS URL** (recommended) or its Tailscale/LAN IP — see
+> [The bridge URL your phone uses](#the-bridge-url-your-phone-uses). Then add a
+> [run-on-boot](#run-on-boot) service so it's always available.
+
 ### 🤖 Ask Hermes
 > ⚠️ **Generate your own secrets.** `BRIDGE_TOKEN` and `NTFY_TOPIC` are yours to
 > create (step 2) — don't ask the agent to generate or write them. The prompts
