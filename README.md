@@ -7,7 +7,7 @@
 
 The **mobile bridge sidecar** for [Hermes Dispatch](https://github.com/adebnar/hermes-dispatch-android).
 It sits next to your self-hosted Hermes agent (fronting the **hermes-agent
-dashboard** — REST + JSON-RPC-over-WebSocket; verified against v0.16.0, see
+dashboard** — REST + JSON-RPC-over-WebSocket; verified against v0.17.0, see
 [`docs/PHASE0-FINDINGS.md`](docs/PHASE0-FINDINGS.md)) and gives the Android app
 what a phone can't do alone:
 
@@ -19,10 +19,12 @@ what a phone can't do alone:
   Monday at 9am…"*) is turned into a scheduled job instead of a one-shot run.
 - **One token for the phone** — the bridge holds the dashboard session token
   server-side; the app only carries a `BRIDGE_TOKEN`.
+- **Document attach** — proxies a picked file to the dashboard's managed-files
+  area and references its path in the prompt, so the agent can read PDFs/CSVs/text.
 - **Mobile-shaped `/v1` API** — stable shape decoupled from dashboard internals.
 
 > Status: early development. The `/v1` API and the dashboard adapter are
-> validated end-to-end against a live hermes-agent v0.16.0 dashboard (REST +
+> validated end-to-end against a live hermes-agent v0.17.0 dashboard (REST +
 > WebSocket chat). Pure logic (cron classification, event mapping, push) is
 > unit-tested.
 
@@ -32,15 +34,18 @@ what a phone can't do alone:
 |---|---|---|
 | GET | `/health` | Liveness (+ whether push/auth are configured) |
 | GET | `/v1/auth/check` | Validate the bridge token |
-| GET | `/v1/tasks` | List tasks (sessions) |
-| POST | `/v1/tasks` | Start a task → one-shot run (held server-side) **or** a cron |
-| GET | `/v1/tasks/{stream_id}/events` | Foreground SSE for a held run |
-| POST | `/v1/tasks/{stream_id}/cancel` | Cancel a running task |
-| POST | `/v1/tasks/{stream_id}/steer` | Send a mid-run message |
+| GET | `/v1/info` | Bridge + gateway (Hermes) versions, for the app's About panel |
+| GET | `/v1/tasks` | List tasks (sessions), each with a derived run-state |
+| POST | `/v1/tasks` | Start a task → one-shot run (held server-side) **or** a cron; accepts `images` + `attachments` |
+| GET | `/v1/tasks/{id}/events` | Foreground SSE for a held run (buffered + replayed) |
+| GET | `/v1/tasks/{id}/live` | Whether a run is actively streaming (lets the app reattach) |
+| GET | `/v1/tasks/{id}/messages` | Conversation history for a task |
+| POST | `/v1/tasks/{id}/{cancel\|steer\|approve\|clarify}` | Control a running task |
+| POST | `/v1/files/upload` | Upload a document to the dashboard's managed files; returns its path |
+| GET | `/v1/models` · POST `/v1/models/set` | List / set the profile's model |
 | GET | `/v1/schedules` | List scheduled jobs |
 | POST | `/v1/schedules/{id}/{pause\|resume\|run\|delete}` | Control a job |
-| POST | `/v1/push/register` | Register this device's push endpoint (ntfy URL) |
-| POST | `/v1/push/unregister` | Remove a device endpoint |
+| POST | `/v1/push/register` · `/v1/push/unregister` | Manage a device's push endpoint |
 | GET | `/v1/mcp` | List connected MCP servers |
 
 Background push fans out to every **registered device endpoint** plus an
