@@ -122,6 +122,11 @@ class HermesClient:
     async def model_info(self) -> dict:
         return await self._get("/api/model/info")
 
+    async def gateway_version(self) -> str | None:
+        """The hermes-agent dashboard version (from /api/system/stats)."""
+        data = await self._get("/api/system/stats")
+        return data.get("hermes_version") if isinstance(data, dict) else None
+
     async def model_options(self, profile: str | None = None) -> dict:
         path = "/api/model/options"
         if profile:

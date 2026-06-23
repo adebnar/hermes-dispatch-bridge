@@ -160,6 +160,16 @@ class StreamHub:
         self._done.pop(sid, None)
         self._subs.pop(sid, None)
 
+    def is_live(self, stream_id: str) -> bool:
+        """True iff a run for this session is actively streaming right now.
+
+        A finished run's buffer is retained (``_RETAIN_AFTER_DONE``) for late
+        clients, so "in ``_buffers``" is NOT the same as "still running". The app
+        uses this to decide whether to reattach an open task to its live stream
+        (vs. a completed run, whose transcript already comes from history).
+        """
+        return stream_id in self._tasks and not self._done.get(stream_id, True)
+
     async def subscribe(self, stream_id: str) -> AsyncIterator[str]:
         # Unknown / expired run: nothing to stream.
         if stream_id not in self._buffers and stream_id not in self._tasks:

@@ -10,6 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from . import __version__
 from .auth import require_auth
 from .classify import classify_schedule
 from .config import settings
@@ -125,6 +126,17 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
 @router.get("/auth/check")
 async def auth_check() -> dict:
     return {"ok": True}
+
+
+@router.get("/info")
+async def info(hermes: HermesClient = Depends(get_hermes)) -> dict:
+    """Version info for the app's About screen: this bridge + the gateway it fronts."""
+    gateway_version: str | None = None
+    try:
+        gateway_version = await hermes.gateway_version()
+    except Exception:  # noqa: BLE001 - About is best-effort; missing version is fine
+        gateway_version = None
+    return {"bridge_version": __version__, "gateway_version": gateway_version}
 
 
 @router.get("/profiles", response_model=ProfilesResponse)
@@ -263,6 +275,19 @@ async def task_events(
     hub: StreamHub = Depends(get_hub),
 ) -> StreamingResponse:
     return StreamingResponse(hub.subscribe(stream_id), media_type="text/event-stream")
+
+
+@router.get("/tasks/{session_id}/live")
+async def task_live(
+    session_id: str,
+    hub: StreamHub = Depends(get_hub),
+) -> dict:
+    """Whether this session has a run actively streaming server-side.
+
+    The app calls this when opening a task so it can reattach to an in-progress
+    run's live stream instead of showing a stale snapshot.
+    """
+    return {"live": hub.is_live(session_id)}
 
 
 @router.post("/tasks/{stream_id}/cancel")
