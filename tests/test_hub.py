@@ -25,6 +25,31 @@ async def test_unknown_stream_yields_nothing():
 
 
 @pytest.mark.asyncio
+async def test_idle_stream_emits_heartbeat(monkeypatch):
+    import asyncio
+
+    from app import hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "_HEARTBEAT_SECS", 0.02)
+    hub = _hub()
+    hub._buffers["s"] = []
+    hub._done["s"] = False
+
+    received: list[str] = []
+
+    async def consume():
+        async for f in hub.subscribe("s"):
+            received.append(f)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.1)              # idle: should tick a few heartbeats
+    hub._done["s"] = True
+    hub._broadcast_sentinel("s")
+    await asyncio.wait_for(task, timeout=2)
+
+    assert any(f.startswith(": ping") for f in received)  # keep-alive emitted while idle
+
+
 async def test_live_subscriber_gets_buffered_then_streamed():
     hub = _hub()
     hub._buffers["s"] = [("token", '{"text":"a"}')]  # already buffered

@@ -30,6 +30,7 @@ _SENTINEL = object()
 _START_TIMEOUT = 25.0
 _BUFFER_CAP = 5000          # max frames retained per run
 _RETAIN_AFTER_DONE = 600.0  # seconds to keep a finished run's buffer for late clients
+_HEARTBEAT_SECS = 15.0  # SSE keep-alive cadence while a run is quiet
 
 
 def _rpc(rid: int, method: str, params: dict) -> str:
@@ -177,7 +178,15 @@ class StreamHub:
             if done:
                 return
             while True:
-                item = await queue.get()
+                # Heartbeat: long local-model turns can go many seconds with no
+                # frame; an idle socket gets killed ("Software caused connection
+                # abort"). Emit an SSE comment so the connection stays warm. The
+                # client ignores ':' comment lines.
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECS)
+                except TimeoutError:
+                    yield ": ping\n\n"
+                    continue
                 if item is _SENTINEL:
                     break
                 event_name, data = item
