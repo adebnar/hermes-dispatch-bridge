@@ -47,6 +47,7 @@ from .models import (
 )
 from .push import Pusher
 from .registry import EndpointRegistry
+from .session_chain import chain_transcript
 from .store import StateStore
 
 log = logging.getLogger("hermes-dispatch-bridge")
@@ -89,7 +90,7 @@ async def lifespan(app: FastAPI):
         await http.aclose()
 
 
-app = FastAPI(title="Hermes Dispatch Bridge", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Hermes Dispatch Bridge", version="0.1.1", lifespan=lifespan)
 
 
 def get_hermes(request: Request) -> HermesClient:
@@ -311,6 +312,14 @@ async def task_messages(
     hermes: HermesClient = Depends(get_hermes),
     x_hermes_profile: str | None = Header(default=None),
 ) -> list[Message]:
+    # Compression splits a long conversation across a parent_session_id chain,
+    # and the messages API only ever returns the chain's tip. Read the full
+    # stitched transcript from the session DB (root → tip) so earlier messages
+    # don't vanish; fall back to the single-session API on any problem.
+    stitched = chain_transcript(settings.hermes_root, x_hermes_profile, session_id)
+    if stitched is not None:
+        return [Message(role=role, text=text) for role, text in stitched]
+
     out: list[Message] = []
     for m in await hermes.messages(session_id, profile=x_hermes_profile):
         role = m.get("role")
