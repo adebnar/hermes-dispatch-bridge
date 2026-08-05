@@ -12,7 +12,7 @@ dependencies = [
     "websockets>=13",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "cryptography>=43",
+    "cryptography>=50.0.0",
     "python-multipart>=0.0.12",
 ]
 
